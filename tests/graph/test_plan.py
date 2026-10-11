@@ -103,3 +103,31 @@ def test_where_value_must_be_a_classify_option() -> None:
     problems = validate_plan(plan, FIELDS)
     assert len(problems) == 1
     assert "['Bug'] is not a value of 'type'" in problems[0]
+
+
+def test_nested_where_refs_are_checked() -> None:
+    where = {
+        "all": [
+            {"field": "type", "op": "eq", "value": "bug"},
+            {"any": [{"field": "dup_group_canonical", "op": "truthy"}]},
+        ]
+    }
+    rank = {"criterion": "severity", "score_field": "urgency", "top_k": 5, "where": where}
+    plan = _plan(("n1", "classify", CLASSIFY), ("n2", "score", SCORE), ("n3", "rank", rank))
+    problems = validate_plan(plan, FIELDS)
+    assert problems == [
+        (
+            "n3 (rank): where.all[1].any[0].field refers to field 'dup_group_canonical', which "
+            "does not exist at this point (not in the items and not written by an earlier node)"
+        )
+    ]
+    dedupe = {"mode": "issues", "block_by": "type"}
+    plan.nodes.insert(2, PlanNode(id="n4", tool="dedupe", params=dedupe))
+    assert validate_plan(plan, FIELDS) == []
+
+
+def test_nested_where_values_are_checked() -> None:
+    where = {"all": [{"field": "type", "op": "eq", "value": "Bug"}]}
+    plan = _plan(("n1", "classify", CLASSIFY), ("n2", "score", {**SCORE, "where": where}))
+    [problem] = validate_plan(plan, FIELDS)
+    assert problem.startswith("n2 (score): where.all[0].value ['Bug'] is not a value of 'type'")

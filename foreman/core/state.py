@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 _MISSING = object()
 
@@ -33,14 +33,43 @@ class RunState(BaseModel):
 
 
 class Condition(BaseModel):
-    """A routing predicate on one field; lets the plan branch without a graph engine."""
+    """A routing predicate; lets the plan branch without a graph engine.
 
-    field: str
-    op: Literal["eq", "ne", "in", "not_in", "truthy", "falsy", "gte", "lte"]
+    A leaf tests one field (`field` + `op` + `value`). `all` (AND) and `any` (OR) combine
+    nested conditions, e.g. "a bug AND the canonical copy of its duplicate group". When a
+    condition has several parts (leaf, `all`, `any`), every part must hold.
+    """
+
+    field: str | None = None
+    op: Literal["eq", "ne", "in", "not_in", "truthy", "falsy", "gte", "lte"] | None = None
     value: Any = None
+    all: list[Condition] | None = None
+    any: list[Condition] | None = None
+
+    @model_validator(mode="after")
+    def _has_a_test(self) -> Condition:
+        if (self.field is None) != (self.op is None):
+            raise ValueError("a field condition needs both `field` and `op`")
+        if self.field is None and not self.all and not self.any:
+            raise ValueError("give `field` and `op`, or a non-empty `all` or `any` list")
+        return self
+
+    def fields(self) -> list[str]:
+        """Every field this condition reads, including inside `all`/`any`."""
+        out = [self.field] if self.field is not None else []
+        for sub in [*(self.all or []), *(self.any or [])]:
+            out += sub.fields()
+        return out
 
     def matches(self, item: ItemState) -> bool:
         """True if the item passes. A missing field never matches, except for `falsy`."""
+        if self.field is not None and not self._leaf(item):
+            return False
+        if self.all and not all(c.matches(item) for c in self.all):
+            return False
+        return not self.any or any(c.matches(item) for c in self.any)
+
+    def _leaf(self, item: ItemState) -> bool:
         if self.field == "text":
             v: Any = item.text
         else:

@@ -297,9 +297,11 @@ class DedupeTool(Tool):
         "Finds items that describe the same real-world entity (the same customer, vendor, "
         "product, account, or the same bug reported twice), e.g. 'ADOBE *CREATIVE CLD' and "
         "'Adobe Systems Inc', and labels each cluster of duplicates with a group id and a "
-        "canonical member. Set `key_fields` to the identifying fields (name, vendor, email, "
-        "title), not dates, amounts or notes. `compare_fields` (default: key_fields) are what "
-        "each pair is judged on: list fields whose values are written in the records, such as "
+        "canonical member (`<output_field>_canonical` is true for exactly one copy of each "
+        "entity, singletons included; `<output_field>_count` is the group size). Set "
+        "`key_fields` to the identifying fields (name, vendor, email, title), not dates, "
+        "amounts or notes. `compare_fields` (default: key_fields) are what each pair is "
+        "judged on: list fields whose values are written in the records, such as "
         "address or email, one field per entry. For free-text reports (reviews, tickets, bug "
         'reports) set `mode: "issues"`: it merges only texts reporting the same feature '
         "failing in the same way, never praise or feature requests. In issues mode always set "
@@ -445,12 +447,14 @@ class DedupeTool(Tool):
 
         report.notes.append(f"checked {len(pairs)} candidate pairs")
         report.notes.append(f"found {len(clusters)} duplicate clusters")
+        unique = len(selected) - sum(len(c) - 1 for c in clusters)
+        report.notes.append(f"{unique} unique of {len(selected)} items")
         report.notes.extend(errors[:MAX_ITEM_NOTES])
         if len(errors) > MAX_ITEM_NOTES:
             report.notes.append(f"... and {len(errors) - MAX_ITEM_NOTES} more pairs skipped")
         if len(selected) < items_in:
             report.notes.append(f"{len(selected)} of {items_in} items matched `where`")
-        report.items_out = len(run.items) - sum(len(c) - 1 for c in clusters)
+        report.items_out = len(run.items)  # duplicates are labelled, never removed
         report.duration_ms = int((time.perf_counter() - t0) * 1000)
         return report
 
@@ -474,6 +478,9 @@ class DedupeTool(Tool):
         """Group ids, canonical flags and provenance on items; cluster list in aggregates.
 
         A member's confidence is the minimum over the answers its matched pairs relied on.
+        Every processed item gets `{out}_canonical` (True for singletons and each
+        cluster's canonical, False for the copies) and `{out}_count` (its group's size), so
+        a later node can keep one copy per issue with `where` and say "reported 3 times".
         """
         out = params.output_field
         canonical_counts = [filled_count(item) for item in selected]  # before outputs exist
@@ -493,6 +500,7 @@ class DedupeTool(Tool):
                     low_confidence=any(a.low_confidence for a in ans),
                 )
                 selected[m].fields[f"{out}_canonical"] = m == canonical
+                selected[m].fields[f"{out}_count"] = len(members)
             clustered.update(members)
             summary.append(
                 {
@@ -505,4 +513,6 @@ class DedupeTool(Tool):
         for i, item in enumerate(selected):
             if i not in clustered:
                 item.fields[out] = None
+                item.fields[f"{out}_canonical"] = True
+                item.fields[f"{out}_count"] = 1
         run.aggregates[f"{out}_clusters"] = summary

@@ -57,8 +57,6 @@ def rule(state, qid, q):
         return FakeAnswer(3.0 if same else 0.0, confidence=0.9)
     if isinstance(q, Score) and qid == "dim_severity":
         return FakeAnswer(3.0 if "crash" in text else 2.0, confidence=0.85)
-    if isinstance(q, Score) and qid == "dim_frequency":
-        return FakeAnswer(3.0 if "every" in text else 1.0, confidence=0.85)
     return None
 
 
@@ -100,13 +98,21 @@ async def test_hero_plan_runs_every_node(tmp_path) -> None:
     cam = by_id["row-2"].fields
     assert cam["type"] == "bug" and cam["type__by"] == "llm"  # escalated at 0.55
     assert cam["theme"] == "Camera Crash" and cam["dup_group"] is not None
+    assert cam["dup_group_canonical"] is True and cam["dup_group_count"] == 3
     assert cam["urgency"] == 100.0 and cam["rank"] == 1
+    for copy in ("row-3", "row-4"):  # duplicates are labelled but not ranked
+        f = by_id[copy].fields
+        assert f["dup_group"] == cam["dup_group"] and f["dup_group_canonical"] is False
+        assert "rank" not in f
     assert by_id["row-2"].meta == {"row": 2}
 
     agg = results.aggregates
     assert agg["theme_counts"]["Camera Crash"] == 3
     assert agg["n_items"] == len(results.items) == 23
-    assert agg["rank_order"][0] in {"row-2", "row-3", "row-4"}
+    assert agg["rank_order"][0] == "row-2"
+    assert not {"row-3", "row-4"} & set(agg["rank_order"])
+    bugs = [i for i in results.items if i.fields.get("type") == "bug"]
+    assert len(agg["rank_order"]) == len(bugs) - 2  # one entry per duplicate group
     curve = agg["escalation_curve"]
     assert len(curve) == 21 and curve[0] == [0.0, 0]
     assert curve[-1][1] > 0 and any(0 < n < curve[-1][1] for _, n in curve)
@@ -126,14 +132,18 @@ async def test_failed_node_skips_only_its_dependents() -> None:
         "n3": "failed",  # group
         "n4": "skipped",  # dedupe blocks by theme
         "n5": "done",  # score: independent of theme
-        "n6": "done",  # rank on urgency
+        "n6": "skipped",  # rank keeps one copy per dedupe group
         "n7": "skipped",  # calculate groups by theme
     }
     failed = results.aggregates["__failed_nodes"]
-    assert [(f["node"], f["status"]) for f in failed] == [("n3", "failed"), ("n4", "skipped")] + [
-        ("n7", "skipped")
+    assert [(f["node"], f["status"]) for f in failed] == [
+        ("n3", "failed"),
+        ("n4", "skipped"),
+        ("n6", "skipped"),
+        ("n7", "skipped"),
     ]
     assert "GroupError" in failed[0]["error"] and "theme" in failed[1]["error"]
-    assert [r.node for r in results.node_reports] == ["n1", "n2", "n5", "n6"]
-    assert results.aggregates["rank_order"]
+    assert "dup_group_canonical" in failed[2]["error"]
+    assert [r.node for r in results.node_reports] == ["n1", "n2", "n5"]
+    assert results.aggregates["urgency_summary"]["n"] > 0
     assert "escalation_curve" in results.aggregates

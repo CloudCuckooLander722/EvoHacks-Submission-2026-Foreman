@@ -107,10 +107,14 @@ Field naming convention for tool outputs:
 
 ```python
 class Condition(BaseModel):
-    field: str
-    op: Literal["eq", "ne", "in", "not_in", "truthy", "falsy", "gte", "lte"]
+    field: str | None = None
+    op: Literal["eq", "ne", "in", "not_in", "truthy", "falsy", "gte", "lte"] | None = None
     value: Any = None
+    all: list[Condition] | None = None   # AND of nested conditions
+    any: list[Condition] | None = None   # OR of nested conditions
 ```
+
+A condition needs `field` + `op`, or a non-empty `all`/`any`; when it has several parts, all of them must hold. Example: `{"all": [{"field": "type", "op": "eq", "value": "bug"}, {"field": "dup_group_canonical", "op": "truthy"}]}`.
 
 ## 4. Core APIs (exact contracts every tool relies on)
 
@@ -336,12 +340,12 @@ class Plan(BaseModel):
     nodes: list[PlanNode]   # 1-12 nodes, run in order
 ```
 
-The hand-written hero plan is `data/plans/reviews_backlog.json` (filter → classify `type` → group `theme` on bugs and feature requests → dedupe issues blocked by theme → score `urgency` (severity ×2, frequency ×1) → rank by `urgency`, top 20 → calculate type/theme counts, `n_items`, `avg_urgency`). It is the planner's few-shot example and the demo fallback (`planner.hero_plan()`).
+The hand-written hero plan is `data/plans/reviews_backlog.json` (filter → classify `type` → group `theme` on bugs and feature requests, `outlier_min: 3` → dedupe issues blocked by theme → score `urgency` on severity only → rank by `urgency`, top 20, only `type == bug` **and** `dup_group_canonical` so each duplicate group appears once → calculate type/theme counts, `n_items`, `avg_urgency`). Dedupe marks every item it processes with `dup_group_canonical` (true for singletons and each group's canonical copy) and `dup_group_count` (group size), so the backlog can say "reported 3 times". It is the planner's few-shot example and the demo fallback (`planner.hero_plan()`).
 
 `validate_plan(plan, sample_fields) -> list[str]` returns readable problems (empty = OK):
 - every tool exists, and params validate against its `Params` (pydantic errors as `n2 (classify): params.options: ...`);
 - node ids are unique; at most 12 nodes;
-- every field a node reads exists at that point: `"text"`, a field in the items, or one an earlier node produced. Reads are found generically: `where.field`, any `*_field` param (input/score/claim/source...), any `*_fields` list (key/compare), `block_by`, and Calculate's per-op `field`/`by`/`a`/`b`/`where` (a/b that parse as numbers are literals). A node produces its `output_field` and every `f"{output_field}_..."` field (`urgency_severity`, `rank_score`, `type__confidence`); Calculate row ops produce their `as` names, visible to later ops in the same node;
+- every field a node reads exists at that point: `"text"`, a field in the items, or one an earlier node produced. Reads are found generically: `where.field` (including inside nested `all`/`any`), any `*_field` param (input/score/claim/source...), any `*_fields` list (key/compare), `block_by`, and Calculate's per-op `field`/`by`/`a`/`b`/`where` (a/b that parse as numbers are literals). A node produces its `output_field` and every `f"{output_field}_..."` field (`urgency_severity`, `rank_score`, `type__confidence`); Calculate row ops produce their `as` names, visible to later ops in the same node;
 - a `where` with `eq/ne/in/not_in` on a Classify (or Filter) output uses values that output can hold (catches `"Bug"` vs `"bug"`).
 
 `FieldScope` does the field tracking; the executor reuses it.
@@ -372,7 +376,7 @@ The hand-written hero plan is `data/plans/reviews_backlog.json` (filter → clas
 ```bash
 python -m foreman.dev run --items <items.json> --job "<plain English>" [--plan <plan.json>] [--save-plan <path>] [--threshold 0.7] [--fake]
 ```
-Starts the `openai` import in a thread and fires `LLMClient.warm()` (one tiny call, not charged to the run) in the background, so the first fallback doesn't pay the cold start. Plans with `make_plan` (or loads and validates `--plan`, with `--job` overriding its job), prints the plan, prints one live line per node, then a summary: items in/out, decisions by Jev/LLM/code with Jev's share, costs, wall time, top 5 ranked, theme counts and the results path. With `--fake`, `FakeLLM` has no canned theme proposal, so a plan with `group` shows the partial-result path (group fails, its dependents are skipped).
+Starts the `openai` import in a thread. `make_context()` warms every live client it builds in the background (`RunContext.warmups`): one tiny Jev Noul and one `LLMClient.warm()` call, neither charged to the run, so the first node and the first fallback don't pay the cold start. Injected clients (tests) are never warmed. Plans with `make_plan` (or loads and validates `--plan`, with `--job` overriding its job), prints the plan, prints one live line per node, then a summary: items in/out, decisions by Jev/LLM/code with Jev's share, costs, wall time, top 5 ranked (with the dedupe report count), theme counts and the results path. With `--fake`, `FakeLLM` has no canned theme proposal, so a plan with `group` shows the partial-result path (group fails, its dependents are skipped).
 
 **Stretch:** merge consecutive per-item nodes into one Jev call per item (speculative fan-out).
 

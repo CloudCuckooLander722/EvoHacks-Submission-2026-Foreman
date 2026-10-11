@@ -34,6 +34,7 @@
       "params": {
         "n_themes": 8,
         "focus": "the specific problem or request in the feedback",
+        "outlier_min": 3,
         "output_field": "theme",
         "where": {"field": "type", "op": "in", "value": ["bug", "feature_request"]}
       }
@@ -52,29 +53,18 @@
     {
       "id": "n5",
       "tool": "score",
-      "why": "Rate each bug's severity and how often it happens.",
+      "why": "Rate how severe each bug is for the user.",
       "params": {
         "dimensions": [
           {
             "name": "severity",
             "instructions": "How severe is the problem described in the text for the user?",
-            "weight": 2,
+            "weight": 1,
             "levels": [
               "No problem described",
               "Minor annoyance, app still usable",
               "A feature is broken or unusable",
               "The app crashes, loses data, or charges money wrongly"
-            ]
-          },
-          {
-            "name": "frequency",
-            "instructions": "How often does the text say the problem happens?",
-            "weight": 1,
-            "levels": [
-              "Not stated in the text",
-              "Happened once",
-              "Happens sometimes",
-              "Happens every time or constantly"
             ]
           }
         ],
@@ -85,13 +75,18 @@
     {
       "id": "n6",
       "tool": "rank",
-      "why": "Order the bugs by urgency to make the backlog.",
+      "why": "Order the bugs by urgency, one entry per duplicate group, to make the backlog.",
       "params": {
         "criterion": "urgency of fixing this issue for users",
         "score_field": "urgency",
         "top_k": 20,
         "output_field": "rank",
-        "where": {"field": "type", "op": "eq", "value": "bug"}
+        "where": {
+          "all": [
+            {"field": "type", "op": "eq", "value": "bug"},
+            {"field": "dup_group_canonical", "op": "truthy"}
+          ]
+        }
       }
     },
     {

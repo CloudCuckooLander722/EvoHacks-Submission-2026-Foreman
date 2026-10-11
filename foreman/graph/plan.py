@@ -140,10 +140,19 @@ def _is_number(v: Any) -> bool:
     return True
 
 
+def _where_leaves(where: Any, loc: str) -> list[tuple[str, dict[str, Any]]]:
+    """Every single-field test in a `where`, with its location, following `all`/`any`."""
+    if not isinstance(where, dict):
+        return []
+    out = [(loc, where)] if isinstance(where.get("field"), str) else []
+    for key in ("all", "any"):
+        for i, sub in enumerate(where.get(key) or []):
+            out += _where_leaves(sub, f"{loc}.{key}[{i}]")
+    return out
+
+
 def _where_refs(where: Any, loc: str) -> list[tuple[str, str]]:
-    if isinstance(where, dict) and isinstance(where.get("field"), str):
-        return [(f"{loc}.field", where["field"])]
-    return []
+    return [(f"{at}.field", w["field"]) for at, w in _where_leaves(where, loc)]
 
 
 def field_refs(tool: str, params: dict[str, Any]) -> list[tuple[str, str]]:
@@ -191,11 +200,9 @@ def missing_fields(tool: str, params: dict[str, Any], scope: FieldScope) -> list
 
 def _where_value_problems(params: dict[str, Any], scope: FieldScope) -> list[str]:
     """`where` values that the field it filters on can never hold (e.g. 'Bug' vs 'bug')."""
-    wheres = [("where", params.get("where"))]
-    wheres += [
-        (f"operations[{i}].where", op.get("where"))
-        for i, op in enumerate(params.get("operations") or [])
-    ]
+    wheres = _where_leaves(params.get("where"), "where")
+    for i, op in enumerate(params.get("operations") or []):
+        wheres += _where_leaves(op.get("where"), f"operations[{i}].where")
     out: list[str] = []
     for loc, w in wheres:
         if not isinstance(w, dict) or w.get("op") not in _VALUE_OPS:

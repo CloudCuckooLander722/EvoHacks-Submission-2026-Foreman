@@ -66,10 +66,13 @@ guesses about the world (how many users are affected).
 - For free-text items, dedupe uses mode "issues" with `block_by` set to a category or theme \
 field written by an earlier node. For short records, it uses mode "records" with `key_fields`.
 - rank uses `score_field` when a score node exists, and always sets `top_k` (at most 25).
+- When a dedupe node exists, rank only one copy of each duplicate group: add \
+{{"field": "<dedupe output_field>_canonical", "op": "truthy"}} to rank's `where` (with `all`).
 - Use `where` to run a node only on the items it applies to (e.g. score only bugs). A \
 `where` value must be exactly one of the values the field can hold (classify option keys).
 - Only refer to fields that exist: "text", the item fields listed, or an earlier node's \
-`output_field`. A score node also writes `<output_field>_<dimension name>`.
+`output_field`. A score node also writes `<output_field>_<dimension name>`; a dedupe node also writes \
+`<output_field>_canonical` (true for one copy per group) and `<output_field>_count`.
 - End with a calculate node producing the counts and summaries a report would need.
 """
 
@@ -88,7 +91,8 @@ SAMPLE ITEMS ({n_samples}, text truncated to {sample_chars} characters):
 
 TOOLS (name: description; then params as `name: type = default - description`; \
 every tool also takes `where: {{field, op, value}}` with op one of \
-eq|ne|in|not_in|truthy|falsy|gte|lte):
+eq|ne|in|not_in|truthy|falsy|gte|lte; combine tests with `{{"all": [<where>, ...]}}` (AND) \
+or `{{"any": [<where>, ...]}}` (OR)):
 {tools}
 """
 

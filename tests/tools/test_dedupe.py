@@ -86,19 +86,21 @@ async def test_clusters_canonical_and_aggregates() -> None:
 
     assert f["a"]["dup_group"] == f["c"]["dup_group"] == "dup-1"
     assert f["b"]["dup_group"] == f["d"]["dup_group"] == "dup-2"
-    for k in "efg":
-        assert f[k]["dup_group"] is None
-        assert "dup_group__confidence" not in f[k] and "dup_group_canonical" not in f[k]
+    for k in "efg":  # singletons: no group, but each is the one copy of itself
+        assert f[k]["dup_group"] is None and "dup_group__confidence" not in f[k]
+        assert f[k]["dup_group_canonical"] is True and f[k]["dup_group_count"] == 1
     # a and c both fill vendor+address -> tie -> earliest; d has no address -> b wins.
     assert f["a"]["dup_group_canonical"] is True and f["c"]["dup_group_canonical"] is False
     assert f["b"]["dup_group_canonical"] is True and f["d"]["dup_group_canonical"] is False
+    assert [f[k]["dup_group_count"] for k in "abcd"] == [2, 2, 2, 2]
     assert f["a"]["dup_group__by"] == "jev" and f["a"]["dup_group__confidence"] == 0.9
 
     assert run.aggregates["dup_group_clusters"] == [
         {"group": "dup-1", "canonical_id": "a", "member_ids": ["a", "c"], "conflicts": []},
         {"group": "dup-2", "canonical_id": "b", "member_ids": ["b", "d"], "conflicts": []},
     ]
-    assert report.items_in == 7 and report.items_out == 5
+    assert report.items_in == report.items_out == 7  # duplicates are labelled, not removed
+    assert "5 unique of 7 items" in report.notes
     assert "checked 3 candidate pairs" in report.notes
     assert "found 2 duplicate clusters" in report.notes
     assert len(jev.calls) == 3  # never n² pairs
@@ -124,7 +126,7 @@ async def test_below_threshold_pairs_do_not_cluster() -> None:
     f = {i.id: i.fields for i in run.items}
     assert f["a"]["dup_group"] is None and f["c"]["dup_group"] is None
     assert f["b"]["dup_group"] == "dup-1"
-    assert report.items_out == 6
+    assert report.items_out == 7 and "6 unique of 7 items" in report.notes
 
 
 async def test_conflicts_recorded() -> None:
@@ -183,6 +185,7 @@ async def test_where_limits_items() -> None:
     ctx = await make_context(threshold=0.7, jev=FakeJev(_vendor_rule({})), llm=FakeLLM())
     report = await DedupeTool().run(run, p, ctx)
     assert "dup_group" not in run.items[2].fields
+    assert "dup_group_canonical" not in run.items[2].fields  # only processed items are marked
     assert any("6 of 7 items matched" in n for n in report.notes)
 
 
@@ -217,7 +220,7 @@ async def test_blocking_path_avoids_n_squared(monkeypatch: pytest.MonkeyPatch) -
     assert max(sizes) <= dd.MAX_BLOCK_SIZE
     assert sum(s * s for s in sizes) < 300 * 300 / 4
     assert len(run.aggregates["dup_group_clusters"]) == 150
-    assert report.items_out == 150
+    assert report.items_out == 300 and "150 unique of 300 items" in report.notes
 
 
 def test_params_validation_and_catalog() -> None:
@@ -303,7 +306,7 @@ async def test_issues_match_only_top_two_levels() -> None:
     assert f["cam1"]["dup_group"] == f["cam2"]["dup_group"] == "dup-1"
     assert f["freeze"]["dup_group"] is None
     assert f["cam1"]["dup_group__confidence"] == pytest.approx(0.9)  # min(same, is_problem)
-    assert report.items_out == 4
+    assert report.items_out == report.items_in
 
 
 async def test_issues_praise_never_merges() -> None:

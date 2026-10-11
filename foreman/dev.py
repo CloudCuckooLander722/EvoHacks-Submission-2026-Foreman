@@ -291,17 +291,26 @@ def _ranked_table(results: Any, plan: Any, n: int = 5) -> Table | None:
     order = results.aggregates.get(f"{out}_order") or []
     by_id = {i.id: i for i in results.items}
     score_field = ranks[-1].params.get("score_field")
+    dedupes = [x for x in plan.nodes if x.tool == "dedupe"]
+    count_field = (
+        f"{dedupes[-1].params.get('output_field', 'dup_group')}_count" if dedupes else None
+    )
     t = Table(title=f"Top {n} by {out}")
     t.add_column("#", no_wrap=True)
     t.add_column("id", no_wrap=True)
     t.add_column(score_field or f"{out}_score", no_wrap=True)
+    if count_field:
+        t.add_column("reports", no_wrap=True)
     t.add_column("text")
     for item_id in order[:n]:
         item = by_id.get(item_id)
         if item is None:
             continue
         score = item.fields.get(score_field or f"{out}_score")
-        t.add_row(str(item.fields.get(out)), item.id, str(score), item.text[:90])
+        row = [str(item.fields.get(out)), item.id, str(score)]
+        if count_field:
+            row.append(str(item.fields.get(count_field, "")))
+        t.add_row(*row, item.text[:90])
     return t
 
 
@@ -388,8 +397,6 @@ async def cmd_run(args: argparse.Namespace) -> int:
     run = load_items(args.items, job=args.job or "")
     n_in = len(run.items)
     ctx = await make_context(run_id=run.run_id, threshold=args.threshold, fake=args.fake)
-    warm = getattr(ctx.llm, "warm", None)
-    warm_task = asyncio.create_task(warm()) if warm is not None and not args.fake else None
     mode = "fake" if args.fake else "live"
     console.print(f"run {run.run_id}: {n_in} items ({mode}, threshold {ctx.threshold})")
 
@@ -425,8 +432,6 @@ async def cmd_run(args: argparse.Namespace) -> int:
         with Progress(console=console, transient=True) as bar:
             results = await execute(plan, run, ctx, on_node=_node_printer(bar))
     finally:
-        if warm_task is not None and not warm_task.done():
-            warm_task.cancel()
         await ctx.aclose()
 
     _print_summary(results, plan, n_in, run_dir(run.run_id) / "results.json")
