@@ -103,6 +103,15 @@ Each API run also records `runs/<run_id>/events.jsonl`. Turn a finished run into
 python -m foreman.dev replay-export <run_id> --out web/public/replays/<name>/
 ```
 
+### Chat window (Streamlit)
+
+```bash
+pip install -e ".[chat]"
+streamlit run foreman/chat/app.py
+```
+
+Type a job and the reply shows the plan, per-step progress, the Jev / LLM / code split, cost, time, the top-ranked items and the results table. The sidebar picks live models (needs both keys), the recorded 1,000-review run, or offline stand-ins. It has no password, so don't share a live deployment's URL publicly.
+
 ## Team
 
 - **Minh:** extraction, formatting, frontend.
