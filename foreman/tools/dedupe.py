@@ -1,13 +1,16 @@
-"""Dedupe: entity resolution with cheap candidate pairs, Jev judgments and union-find.
+"""Dedupe: entity resolution with cheap candidate pairs, Jev judgments and anchored clusters.
 
 Asking Jev about every pair of n items is n² calls, which is too slow and costly beyond a
 few dozen items. So code proposes candidate pairs first (rapidfuzz `token_set_ratio` on a
-normalized key, with token blocking once n is large), Jev judges only those pairs, and
-union-find turns the matched pairs into clusters.
+normalized key, with token blocking once n is large), keeps only each item's
+`max_neighbors` most similar candidates, and Jev judges just those pairs.
 
-Union-find is transitive: if A~B and B~C match, A, B and C land in one cluster even when
-A and C were never compared (or would not have matched). That chaining is acceptable for
-this build; a stricter version would re-check clusters before merging.
+Clusters never chain. A transitive merge (A~B and B~C put A, B and C together) turned
+whole themes into one "duplicate" group on 10k reviews, because similar-but-different
+reports link up step by step. Instead, matched pairs are taken strongest first; a pair of
+two unclustered items founds a cluster whose canonical is the more complete record, and
+an item joins an existing cluster only through a direct match with that cluster's
+canonical. Every member is therefore a judged duplicate of the canonical itself.
 
 Two modes. "records" asks whether two structured records are the same real-world entity.
 "issues" is for free-text reports (reviews, tickets): "the same entity" is too vague for
@@ -84,6 +87,7 @@ PROBLEM_INSTRUCTIONS = "Does text_a report a problem with the app?"
 PROBLEM_P = 0.5
 RECORDS_MIN_SIMILARITY = 55
 ISSUES_MIN_SIMILARITY = 50
+NO_THEME = "none_of_these"  # what group writes for items that fit no theme
 
 _PUNCT = re.compile(r"[^\w\s]|_")
 _LONG_NUMBER = re.compile(r"^\d{3,}$")
@@ -118,6 +122,17 @@ class DedupeParams(ToolParams):
         ge=0,
         le=100,
         description="Fuzzy-match cutoff (0-100) for candidate pairs; 50 in issues mode unless set.",
+    )
+    max_neighbors: int | None = Field(
+        default=5,
+        ge=1,
+        description="Pair each item only with its k most similar candidates (by string "
+        "similarity, within its block); null compares every pair above min_similarity.",
+    )
+    skip_blocks: list[str] = Field(
+        default_factory=lambda: [NO_THEME],
+        description="block_by values whose items are not deduped (each stays its own "
+        "group), e.g. a catch-all theme whose members have nothing in common.",
     )
     max_pairs: int = Field(default=20000, ge=1, description="At most this many pairs are judged.")
     match_threshold: float = Field(
@@ -221,12 +236,34 @@ def blocks(keys: list[str], idx: Iterable[int]) -> list[list[int]]:
     return [b for b in index.values() if 2 <= len(b) <= MAX_BLOCK_SIZE]
 
 
+def top_neighbors(
+    pairs: list[tuple[int, int, float]], k: int | None
+) -> list[tuple[int, int, float]]:
+    """Keep a pair if it is among the `k` most similar candidates of either of its items.
+
+    Bounds the work at about k pairs per item, where all pairs above a cutoff grow with
+    the square of a block's size. Input order (most similar first) is kept.
+    """
+    if k is None:
+        return pairs
+    ranked: dict[int, list[tuple[float, int, int]]] = defaultdict(list)
+    for n, (i, j, s) in enumerate(pairs):
+        ranked[i].append((-s, n, j))
+        ranked[j].append((-s, n, i))
+    keep = {n for row in ranked.values() for _, n, _ in sorted(row)[:k]}
+    return [p for n, p in enumerate(pairs) if n in keep]
+
+
 def candidate_pairs(
-    keys: list[str], min_similarity: int, within: Iterable[int] | None = None
+    keys: list[str],
+    min_similarity: int,
+    within: Iterable[int] | None = None,
+    max_neighbors: int | None = None,
 ) -> list[tuple[int, int, float]]:
     """Similar-looking pairs (i < j), most similar first; empty keys never pair.
 
-    `within` limits the search to those indices (one `block_by` group).
+    `within` limits the search to those indices (one `block_by` group); `max_neighbors`
+    keeps only each item's k most similar candidates (see `top_neighbors`).
     """
     idx = [i for i in (range(len(keys)) if within is None else within) if keys[i]]
     if len(idx) <= CDIST_MAX_N:
@@ -235,50 +272,70 @@ def candidate_pairs(
         scored = {}
         for block in blocks(keys, idx):
             scored.update(score_pairs(keys, block, min_similarity))
-    return sorted(((i, j, s) for (i, j), s in scored.items()), key=lambda p: (-p[2], p[0], p[1]))
+    pairs = sorted(((i, j, s) for (i, j), s in scored.items()), key=lambda p: (-p[2], p[0], p[1]))
+    return top_neighbors(pairs, max_neighbors)
 
 
-def block_by_groups(items: list[ItemState], field: str | None) -> tuple[list[list[int]], int]:
-    """Indices grouped by their `field` value, and how many items had no value to group by."""
+def block_by_groups(
+    items: list[ItemState], field: str | None, skip: Iterable[str] = ()
+) -> tuple[list[list[int]], int, int]:
+    """Indices grouped by their `field` value, plus how many items had no value and how
+    many were in a skipped block (neither kind is compared)."""
     if field is None:
-        return [list(range(len(items)))], 0
+        return [list(range(len(items)))], 0, 0
+    skip = set(skip)
     groups: dict[str, list[int]] = defaultdict(list)
-    missing = 0
+    missing = skipped = 0
     for i, item in enumerate(items):
         v = field_value(item, field)
         if is_empty(v):
             missing += 1
+        elif isinstance(v, str) and v in skip:
+            skipped += 1
         else:
             groups[json.dumps(v, sort_keys=True, default=str)].append(i)
-    return list(groups.values()), missing
+    return list(groups.values()), missing, skipped
 
 
 # --------------------------------------------------------------------------- clustering
 
 
-class UnionFind:
-    """Disjoint sets over 0..n-1; the root of a set is its smallest index."""
+Match = tuple[int, int, float, float]  # i, j, judged match strength, string similarity
 
-    def __init__(self, n: int) -> None:
-        self.parent = list(range(n))
 
-    def find(self, x: int) -> int:
-        while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]
-            x = self.parent[x]
-        return x
+def anchored_clusters(
+    matches: list[Match], completeness: list[int]
+) -> tuple[list[tuple[int, list[int]]], set[tuple[int, int]]]:
+    """Clusters without chaining: every member was matched directly with the canonical.
 
-    def union(self, a: int, b: int) -> None:
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.parent[max(ra, rb)] = min(ra, rb)
+    Matches are taken strongest first (judge's level, then string similarity). Two
+    unclustered items found a cluster whose canonical is the more complete record (ties:
+    the earlier one). An unclustered item joins a cluster only through its match with
+    that cluster's canonical, so it joins its strongest canonical. Any other pair (two
+    members, member and outsider, two clusters) changes nothing.
 
-    def clusters(self) -> list[list[int]]:
-        """Sets of size >= 2, each sorted, ordered by their earliest member."""
-        groups: dict[int, list[int]] = defaultdict(list)
-        for i in range(len(self.parent)):
-            groups[self.find(i)].append(i)
-        return sorted((g for g in groups.values() if len(g) > 1), key=lambda g: g[0])
+    Returns `(canonical, sorted members)` per cluster, ordered by earliest member, and
+    the pairs that were used (for provenance and conflicts).
+    """
+    canon_of: dict[int, int] = {}
+    used: set[tuple[int, int]] = set()
+    for i, j, _, _ in sorted(matches, key=lambda m: (-m[2], -m[3], m[0], m[1])):
+        ci, cj = canon_of.get(i), canon_of.get(j)
+        if ci is None and cj is None:
+            canon = max((i, j), key=lambda m: (completeness[m], -m))
+            canon_of[i] = canon_of[j] = canon
+        elif cj is None and ci == i:  # i is a canonical, j is free
+            canon_of[j] = i
+        elif ci is None and cj == j:  # j is a canonical, i is free
+            canon_of[i] = j
+        else:
+            continue
+        used.add((i, j))
+    members: dict[int, list[int]] = defaultdict(list)
+    for m, c in canon_of.items():
+        members[c].append(m)
+    clusters = sorted(((c, sorted(ms)) for c, ms in members.items()), key=lambda g: g[1][0])
+    return clusters, used
 
 
 def filled_count(item: ItemState) -> int:
@@ -290,7 +347,7 @@ def filled_count(item: ItemState) -> int:
 
 
 class DedupeTool(Tool):
-    """Entity resolution: fuzzy candidates in code, one Jev call per pair, union-find."""
+    """Entity resolution: fuzzy candidates in code, one Jev call per pair, anchored clusters."""
 
     name: ClassVar[str] = "dedupe"
     description: ClassVar[str] = (
@@ -383,15 +440,27 @@ class DedupeTool(Tool):
         report = ToolReport(tool=self.name, items_in=items_in, items_out=items_in)
 
         keys = [build_key(item, params.key_fields) for item in selected]
-        groups, unblocked = block_by_groups(selected, params.block_by)
-        pairs = sorted(
-            (p for g in groups for p in candidate_pairs(keys, params.min_similarity, g)),
-            key=lambda p: (-p[2], p[0], p[1]),
-        )
+        groups, unblocked, skipped = block_by_groups(selected, params.block_by, params.skip_blocks)
+        n_similar = 0
+        pairs: list[tuple[int, int, float]] = []
+        for g in groups:
+            similar = candidate_pairs(keys, params.min_similarity, g)
+            n_similar += len(similar)
+            pairs.extend(top_neighbors(similar, params.max_neighbors))
+        pairs.sort(key=lambda p: (-p[2], p[0], p[1]))
         report.code_ops += 1
         if unblocked:
             report.notes.append(
                 f"{unblocked} items have no `{params.block_by}` value and were not compared"
+            )
+        if skipped:
+            report.notes.append(
+                f"{skipped} items in {', '.join(params.skip_blocks)} were not deduped"
+            )
+        if len(pairs) < n_similar:
+            report.notes.append(
+                f"kept each item's {params.max_neighbors} most similar candidates: "
+                f"{len(pairs)} of {n_similar} similar pairs"
             )
         if len(pairs) > params.max_pairs:
             report.notes.append(
@@ -413,11 +482,10 @@ class DedupeTool(Tool):
             on_done=progress,
         )
 
-        uf = UnionFind(len(selected))
-        edges: dict[int, list[Answer]] = defaultdict(list)  # item -> answers its matches used
-        conflicts: dict[int, set[str]] = defaultdict(set)  # item index -> conflicting fields
+        matches: list[Match] = []
+        judged: dict[tuple[int, int], dict[str, Answer]] = {}
         errors: list[str] = []
-        for (i, j, _), (answers, err) in zip(pairs, results, strict=True):
+        for (i, j, sim), (answers, err) in zip(pairs, results, strict=True):
             if answers is None:
                 errors.append(
                     f"{selected[i].id}|{selected[j].id}: skipped ({type(err).__name__}: {err})"
@@ -427,27 +495,38 @@ class DedupeTool(Tool):
                 report.jev_decisions += a.decided_by == "jev"
                 report.llm_decisions += a.decided_by == "llm"
                 report.low_confidence += a.low_confidence
-            if not self._matches(answers, params):
-                continue
-            uf.union(i, j)
-            used = [answers["same"]] + ([answers["is_problem"]] if "is_problem" in answers else [])
-            edges[i].extend(used)
-            edges[j].extend(used)
+            if self._matches(answers, params):
+                matches.append((i, j, float(answers["same"].value), sim))
+                judged[(i, j)] = answers
+
+        completeness = [filled_count(item) for item in selected]  # before outputs exist
+        clusters, used = anchored_clusters(matches, completeness)
+        edges: dict[int, list[Answer]] = defaultdict(list)  # item -> answers its matches used
+        conflicts: dict[int, set[str]] = defaultdict(set)  # item index -> conflicting fields
+        for i, j in used:
+            answers = judged[(i, j)]
+            relied = [answers["same"]] + (
+                [answers["is_problem"]] if "is_problem" in answers else []
+            )
             bad = {
                 qid.removeprefix("conflict_")
                 for qid, a in answers.items()
                 if qid.startswith("conflict_") and float(a.value) >= CONFLICT_P
             }
-            conflicts[i] |= bad
-            conflicts[j] |= bad
-
-        clusters = uf.clusters()
+            for m in (i, j):
+                edges[m].extend(relied)
+                conflicts[m] |= bad
         report.code_ops += 1
         self._write(selected, clusters, edges, conflicts, run, params)
 
         report.notes.append(f"checked {len(pairs)} candidate pairs")
         report.notes.append(f"found {len(clusters)} duplicate clusters")
-        unique = len(selected) - sum(len(c) - 1 for c in clusters)
+        if len(matches) > len(used):
+            report.notes.append(
+                f"{len(matches) - len(used)} matched pairs not merged (no direct match "
+                "with the cluster's canonical)"
+            )
+        unique = len(selected) - sum(len(ms) - 1 for _, ms in clusters)
         report.notes.append(f"{unique} unique of {len(selected)} items")
         report.notes.extend(errors[:MAX_ITEM_NOTES])
         if len(errors) > MAX_ITEM_NOTES:
@@ -469,7 +548,7 @@ class DedupeTool(Tool):
     def _write(
         self,
         selected: list[ItemState],
-        clusters: list[list[int]],
+        clusters: list[tuple[int, list[int]]],
         edges: dict[int, list[Answer]],
         conflicts: dict[int, set[str]],
         run: RunState,
@@ -483,12 +562,10 @@ class DedupeTool(Tool):
         a later node can keep one copy per issue with `where` and say "reported 3 times".
         """
         out = params.output_field
-        canonical_counts = [filled_count(item) for item in selected]  # before outputs exist
         clustered: set[int] = set()
         summary: list[dict[str, Any]] = []
-        for n, members in enumerate(clusters, start=1):
+        for n, (canonical, members) in enumerate(clusters, start=1):
             group = f"dup-{n}"
-            canonical = max(members, key=lambda m: (canonical_counts[m], -m))
             for m in members:
                 ans = edges[m]
                 set_output(

@@ -7,7 +7,7 @@
       "why": "Drop spam and ads so later steps only judge real feedback.",
       "params": {
         "condition": "Is this text written by a user about the app?",
-        "true_means": "Any user feedback about the app: complaints, bug reports, praise, feature requests, questions",
+        "true_means": "Any user feedback about the app: complaints, bug reports, praise, feature requests, questions, and comments about the articles, writers or other content in the app",
         "false_means": "Spam, advertisements, promotions, or text unrelated to the app",
         "output_field": "is_feedback"
       }
@@ -32,7 +32,7 @@
       "tool": "group",
       "why": "Find the themes among bugs and feature requests.",
       "params": {
-        "n_themes": 8,
+        "n_themes": 12,
         "focus": "the specific problem or request in the feedback",
         "outlier_min": 3,
         "output_field": "theme",
