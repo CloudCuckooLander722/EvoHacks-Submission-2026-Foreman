@@ -91,3 +91,61 @@ Notes for formatting:
 - Outputs computed by code (e.g. `rank` sorted from a score field, `calculate` results) have `X__by: "code"` and `X__confidence: 1.0`.
 - `dropped` lists items a tool removed (e.g. filter). Each entry is `{id, text, fields, reason}`; `reason` comes from `meta["drop_reason"]`, set by the tool that dropped the item. Dropped items have no `meta` in results.json.
 - `aggregates` holds ready-made tables and lists for charts. Formatting should never recompute them with an LLM.
+
+## Replay bundles — recorded runs for the static site (Nathan → Minh)
+
+The deployed site plays back recorded runs, so it needs no API and no keys. A bundle is made from a finished API run:
+
+```bash
+python -m foreman.dev replay-export <run_id> --out web/public/replays/<name>/
+```
+
+```
+web/public/replays/
+  index.json                 every bundle, newest last (upserted by name)
+  <name>/
+    events.jsonl             the run's SSE stream, exactly as sent, one event per line
+    results.json             results.json (ResultsFile), as GET /runs/{id}/results returns it
+    decisions.jsonl          the full ledger, one Decision per line (the "why" panel)
+    input/<file>             the uploaded file
+    export.xlsx|pdf|docx     only when foreman.format.export exists
+```
+
+**events.jsonl:** one JSON object per line, in send order:
+
+```json
+{"t_ms": 253, "event": "plan", "data": {"run_id": "r_8e62399f", "job": "...", "items_total": 1000, "nodes": [...]}}
+{"t_ms": 351, "event": "stats", "data": {"decisions_total": 12, "by": {"jev": 12, "llm": 0, "code": 0}, ...}}
+```
+
+- `event` is one of the §D names (`plan`, `node`, `decision`, `stats`, `done`, `error`) and `data` is that event's §D payload, byte-for-byte what the browser received.
+- `t_ms` is milliseconds since the run was created (POST /runs), so the player can replay in real time or compress it (`t_ms / speed`).
+- `decision` events are the same 10-per-second sample as live; the full ledger is `decisions.jsonl`. The last `stats` event equals `results.json`'s `stats`.
+- A run that failed ends with `error` (`fatal: true`) and has no `done` and no results.json; replay-export only bundles finished runs.
+
+**decisions.jsonl:** in a bundle, use this file for the "why" panel (filter by `item_id`), not the `decisions_file` path inside results.json, which points at the server's `runs/` folder.
+
+**index.json:**
+
+```json
+{
+  "version": 1,
+  "replays": [
+    {
+      "name": "reviews-1k", "run_id": "r_8e62399f",
+      "job": "Turn these app reviews into a ranked bug backlog",
+      "items": 1000, "duration_s": 117.1,
+      "cost_usd": 0.106869, "jev_cost_usd": 0.051219, "llm_cost_usd": 0.055651,
+      "decisions": {"total": 3349, "jev": 2559, "llm": 785, "code": 5},
+      "jev_share": 0.7641, "jev_share_of_model": 0.7653,
+      "threshold": 0.7, "finished_at": "2026-10-11T06:38:43Z",
+      "files": {"events": "events.jsonl", "results": "results.json", "decisions": "decisions.jsonl",
+                "input": "input/reviews_1k.json", "exports": {"xlsx": "export.xlsx"}}
+    }
+  ]
+}
+```
+
+- `items` is the number of items the run processed (the plan event's `items_total`).
+- `jev_share` is Jev's share of all decisions; `jev_share_of_model` excludes code operations (Jev / (Jev + LLM)).
+- Paths in `files` are relative to the bundle folder. `exports` is `{}` until the formatter exists.

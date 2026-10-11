@@ -46,6 +46,48 @@ def test_missing_field_matches_falsy() -> None:
     assert Condition(field="t", op="falsy").matches(_item()) is True
 
 
+BUG = {"field": "t", "op": "eq", "value": "bug"}
+CANON = {"field": "c", "op": "truthy"}
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({"t": "bug", "c": True}, True),
+        ({"t": "bug", "c": False}, False),
+        ({"t": "bug"}, False),  # missing field fails its truthy test
+        ({"t": "praise", "c": True}, False),
+    ],
+)
+def test_condition_all(fields, expected) -> None:
+    cond = Condition.model_validate({"all": [BUG, CANON]})
+    assert cond.matches(_item(**fields)) is expected
+
+
+def test_condition_any_and_nesting() -> None:
+    cond = Condition.model_validate(
+        {"any": [BUG, {"all": [{"field": "t", "op": "eq", "value": "praise"}, CANON]}]}
+    )
+    assert cond.matches(_item(t="bug")) is True
+    assert cond.matches(_item(t="praise", c=1)) is True
+    assert cond.matches(_item(t="praise")) is False
+    assert cond.fields() == ["t", "t", "c"]
+
+
+def test_condition_leaf_and_all_must_both_hold() -> None:
+    cond = Condition.model_validate({**BUG, "all": [CANON]})
+    assert cond.matches(_item(t="bug", c=True)) is True
+    assert cond.matches(_item(t="bug")) is False
+
+
+@pytest.mark.parametrize(
+    "data", [{}, {"field": "t"}, {"op": "eq"}, {"all": []}, {"any": [], "all": None}]
+)
+def test_condition_needs_a_test(data) -> None:
+    with pytest.raises(ValueError):
+        Condition.model_validate(data)
+
+
 def test_get_input() -> None:
     item = _item(rating=5)
     assert get_input(item, "text") == "hello"

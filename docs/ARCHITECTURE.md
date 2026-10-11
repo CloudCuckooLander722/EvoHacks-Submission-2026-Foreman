@@ -107,10 +107,14 @@ Field naming convention for tool outputs:
 
 ```python
 class Condition(BaseModel):
-    field: str
-    op: Literal["eq", "ne", "in", "not_in", "truthy", "falsy", "gte", "lte"]
+    field: str | None = None
+    op: Literal["eq", "ne", "in", "not_in", "truthy", "falsy", "gte", "lte"] | None = None
     value: Any = None
+    all: list[Condition] | None = None   # AND of nested conditions
+    any: list[Condition] | None = None   # OR of nested conditions
 ```
+
+A condition needs `field` + `op`, or a non-empty `all`/`any`; when it has several parts, all of them must hold. Example: `{"all": [{"field": "type", "op": "eq", "value": "bug"}, {"field": "dup_group_canonical", "op": "truthy"}]}`.
 
 ## 4. Core APIs (exact contracts every tool relies on)
 
@@ -320,26 +324,61 @@ The Write tool from the original design is now part of Minh's formatting step.
 
 Build order follows the hero demo: tools 1–8 are needed for it, 9–11 are extras.
 
-## 7. Plan format and executor (built after the tools)
+## 7. Plan format, planner and executor — `foreman/graph/`
 
-```json
-{
-  "job": "Turn these reviews into a backlog...",
-  "nodes": [
-    {"id": "n1", "tool": "filter",   "params": {"condition": "Is this a genuine product review (not spam)?", "output_field": "is_review"}},
-    {"id": "n2", "tool": "classify", "params": {"options": {"bug": "...", "feature_request": "...", "praise": "...", "other": null}, "output_field": "type"}},
-    {"id": "n3", "tool": "group",    "params": {"n_themes": 8, "output_field": "theme", "where": {"field": "type", "op": "in", "value": ["bug", "feature_request"]}}},
-    {"id": "n4", "tool": "dedupe",   "params": {"key_fields": ["text"], "where": {"field": "type", "op": "eq", "value": "bug"}}},
-    {"id": "n5", "tool": "score",    "params": {"dimensions": [...], "output_field": "urgency"}},
-    {"id": "n6", "tool": "rank",     "params": {"criterion": "...", "top_k": 20}},
-    {"id": "n7", "tool": "calculate","params": {"operations": [{"op": "group_count", "by": "theme", "as": "theme_counts"}]}}
-  ]
-}
+### Plan (`graph/plan.py`)
+
+```python
+class PlanNode(BaseModel):
+    id: str            # n1, n2, ...
+    tool: str          # a registered tool name
+    params: dict       # validated against the tool's Params
+    why: str = ""      # one line from the planner, shown in the UI
+
+class Plan(BaseModel):
+    job: str
+    nodes: list[PlanNode]   # 1-12 nodes, run in order
 ```
 
-- **Planner** (`graph/planner.py`) sends the LLM the job, `catalog()` and 20 sample items. It gets `plan.json` back, validates every node's params against the tool's `Params` model, and repairs once on failure.
-- **Executor** (`graph/executor.py`) runs nodes in order on one `RunState`, streams ledger events and per-node `ToolReport`s, then builds `results.json` (`foreman/contracts.py`). results.json embeds the full plan.json object as `plan` and keeps each item's `meta`.
-- **Stretch:** merge consecutive per-item nodes into one Jev call per item (speculative fan-out).
+The hand-written hero plan is `data/plans/reviews_backlog.json` (filter → classify `type` → group `theme` on bugs and feature requests, `outlier_min: 3` → dedupe issues blocked by theme → score `urgency` on severity only → rank by `urgency`, top 20, only `type == bug` **and** `dup_group_canonical` so each duplicate group appears once → calculate type/theme counts, `n_items`, `avg_urgency`). Dedupe marks every item it processes with `dup_group_canonical` (true for singletons and each group's canonical copy) and `dup_group_count` (group size), so the backlog can say "reported 3 times". It is the planner's few-shot example and the demo fallback (`planner.hero_plan()`).
+
+`validate_plan(plan, sample_fields) -> list[str]` returns readable problems (empty = OK):
+- every tool exists, and params validate against its `Params` (pydantic errors as `n2 (classify): params.options: ...`);
+- node ids are unique; at most 12 nodes;
+- every field a node reads exists at that point: `"text"`, a field in the items, or one an earlier node produced. Reads are found generically: `where.field` (including inside nested `all`/`any`), any `*_field` param (input/score/claim/source...), any `*_fields` list (key/compare), `block_by`, and Calculate's per-op `field`/`by`/`a`/`b`/`where` (a/b that parse as numbers are literals). A node produces its `output_field` and every `f"{output_field}_..."` field (`urgency_severity`, `rank_score`, `type__confidence`); Calculate row ops produce their `as` names, visible to later ops in the same node;
+- a `where` with `eq/ne/in/not_in` on a Classify (or Filter) output uses values that output can hold (catches `"Bug"` vs `"bug"`).
+
+`FieldScope` does the field tracking; the executor reuses it.
+
+### Planner (`graph/planner.py`)
+
+`async make_plan(job, run, ctx, *, max_repairs=1) -> Plan`
+- **System prompt:** the planning rules (fewest nodes, filter first, one condition per option/level, filled `true_means`/`false_means`, boundaries in classify options, ordered concrete levels, no model math, dedupe issues+`block_by` for free text, rank `score_field` + `top_k ≤ 25`, `where` routing, end with calculate) plus the hero plan as one complete example.
+- **User prompt:** the job, the item fields with up to 2 example values each, 15 sample items spread across the file (200 chars each), and `compact_catalog()`: each tool's description and one line per param (`name: type = default - description`, nested models inlined as `{a, b}`, no `$defs`).
+- One `ctx.llm.json()` call inside `track_usage()`, charged with `ledger.record_call("llm", ...)` and logged as `Decision(item_id="__run__", tool="planner", kind="proposal", decided_by="llm", value=<nodes>)`.
+- Validated with `validate_plan`. On problems, **one** repair call with the previous JSON and the problem list (question id `plan_repair_1`). Still invalid, or the LLM call fails → `PlanError` with `.problems`.
+
+### Executor (`graph/executor.py`)
+
+`async execute(plan, run, ctx, on_node=None) -> ResultsFile`
+- Runs nodes in order on one `RunState`. For each: look up the tool, validate params, check its field reads, run it, tag its `ToolReport` as a `NodeReport`.
+- `on_node` events (dicts, JSON-ready): `{"node", "tool", "index", "total", "status"}` plus
+  - `"running"` with `"why"` when a node starts, then repeated with `"done"`/`"items"` as items finish (from `ctx.progress`);
+  - `"done"` with `"report"` (a `NodeReport` dict);
+  - `"failed"` with `"error"` (unknown tool, invalid params, or the tool raised);
+  - `"skipped"` with `"error"` naming the missing fields.
+- **Partial results:** a failed node is recorded and the run continues. Later nodes that read a field the failed node would have written are skipped (same `FieldScope` logic); independent nodes still run. Failures and skips are listed in `aggregates["__failed_nodes"]` (`[{node, tool, index, total, status, error}]`; key absent when none).
+- Adds `aggregates["escalation_curve"]` (`[[threshold, count], ...]`, 21 steps, from `ledger.escalation_curve()`).
+- Builds results with `contracts.build_results` (full plan, `ctx.threshold`, `ledger.stats()`) and writes `runs/<run_id>/results.json`, `runs/<run_id>/plan.json` and `runs/<run_id>/decisions.jsonl`.
+
+### Dev command
+
+```bash
+python -m foreman.dev run --items <items.json> --job "<plain English>" [--plan <plan.json>] [--save-plan <path>] [--threshold 0.7] [--fake]
+```
+Starts the `openai` import in a thread. `make_context()` warms every live client it builds in the background (`RunContext.warmups`): one tiny Jev Noul and one `LLMClient.warm()` call, neither charged to the run, so the first node and the first fallback don't pay the cold start. Injected clients (tests) are never warmed. Plans with `make_plan` (or loads and validates `--plan`, with `--job` overriding its job), prints the plan, prints one live line per node, then a summary: items in/out, decisions by Jev/LLM/code with Jev's share, costs, wall time, top 5 ranked (with the dedupe report count), theme counts and the results path. With `--fake`, `FakeLLM` has no canned theme proposal, so a plan with `group` shows the partial-result path (group fails, its dependents are skipped).
+
+**Stretch:** merge consecutive per-item nodes into one Jev call per item (speculative fan-out).
 
 ## 8. API and frontend (after executor)
 

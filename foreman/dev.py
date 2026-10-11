@@ -1,8 +1,10 @@
-"""Dev CLI: ping, tool runner, catalog.
+"""Dev CLI: ping, tool runner, end-to-end run, catalog.
 
     python -m foreman.dev ping
     python -m foreman.dev tool <name> --items <path> --params '<json>' [--threshold 0.7] [--fake] [--limit N]
+    python -m foreman.dev run --items <path> --job "<plain English>" [--plan <plan.json>] [--save-plan <path>] [--threshold 0.7] [--fake]
     python -m foreman.dev catalog
+    python -m foreman.dev replay-export <run_id> --out web/public/replays/<name>/
 
 The fastest way to see a tool working end to end, offline with `--fake` or live.
 """
@@ -11,10 +13,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -234,6 +238,313 @@ async def cmd_tool(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- run
+
+
+def _start_openai_import() -> None:
+    """Import the (slow) openai package in a thread while items load and the plan is read."""
+    import importlib
+    import threading
+
+    threading.Thread(target=importlib.import_module, args=("openai",), daemon=True).start()
+
+
+def _key_params(params: dict[str, Any]) -> str:
+    """The params a reader cares about in one short line (skip long option/level lists)."""
+    parts = []
+    for k, v in params.items():
+        if k in ("true_means", "false_means", "instructions"):
+            continue
+        if k == "where" and isinstance(v, dict):
+            parts.append(f"where {v.get('field')} {v.get('op')} {json.dumps(v.get('value'))}")
+        elif k == "options" and isinstance(v, dict):
+            parts.append(f"options: {', '.join(v)}")
+        elif k == "dimensions" and isinstance(v, list):
+            dims = ", ".join(
+                f"{d.get('name')}×{d.get('weight', 1)}" for d in v if isinstance(d, dict)
+            )
+            parts.append(f"dims: {dims}")
+        elif k == "operations" and isinstance(v, list):
+            ops = ", ".join(f"{o.get('op')}→{o.get('as')}" for o in v if isinstance(o, dict))
+            parts.append(f"ops: {ops}")
+        else:
+            text = v if isinstance(v, str) else json.dumps(v, default=str)
+            parts.append(f"{k}={text[:50]}")
+    return "; ".join(parts)
+
+
+def _plan_table(plan: Any) -> Table:
+    t = Table(title=f"Plan: {plan.job}", show_lines=True)
+    t.add_column("node", no_wrap=True)
+    t.add_column("tool", no_wrap=True)
+    t.add_column("why")
+    t.add_column("key params")
+    for n in plan.nodes:
+        t.add_row(n.id, n.tool, n.why, _key_params(n.params))
+    return t
+
+
+def _ranked_table(results: Any, plan: Any, n: int = 5) -> Table | None:
+    """Top `n` items of the plan's (last) rank node, by its `{out}_order` aggregate."""
+    ranks = [x for x in plan.nodes if x.tool == "rank"]
+    if not ranks:
+        return None
+    out = ranks[-1].params.get("output_field", "rank")
+    order = results.aggregates.get(f"{out}_order") or []
+    by_id = {i.id: i for i in results.items}
+    score_field = ranks[-1].params.get("score_field")
+    dedupes = [x for x in plan.nodes if x.tool == "dedupe"]
+    count_field = (
+        f"{dedupes[-1].params.get('output_field', 'dup_group')}_count" if dedupes else None
+    )
+    t = Table(title=f"Top {n} by {out}")
+    t.add_column("#", no_wrap=True)
+    t.add_column("id", no_wrap=True)
+    t.add_column(score_field or f"{out}_score", no_wrap=True)
+    if count_field:
+        t.add_column("reports", no_wrap=True)
+    t.add_column("text")
+    for item_id in order[:n]:
+        item = by_id.get(item_id)
+        if item is None:
+            continue
+        score = item.fields.get(score_field or f"{out}_score")
+        row = [str(item.fields.get(out)), item.id, str(score)]
+        if count_field:
+            row.append(str(item.fields.get(count_field, "")))
+        t.add_row(*row, item.text[:90])
+    return t
+
+
+def _theme_counts(results: Any) -> dict[str, int]:
+    if isinstance(results.aggregates.get("theme_counts"), dict):
+        return results.aggregates["theme_counts"]
+    for key, v in results.aggregates.items():
+        if key.endswith("_groups") and isinstance(v, list):
+            return {g["theme"]: g["count"] for g in v if isinstance(g, dict)}
+    return {}
+
+
+def _print_summary(results: Any, plan: Any, n_in: int, path: Path) -> None:
+    st = results.stats
+    jev, llm, code = (st.by.get(k, 0) for k in ("jev", "llm", "code"))
+    model = jev + llm
+    console.rule("Summary")
+    console.print(
+        f"items: {n_in} in → {len(results.items)} out ({len(results.dropped)} dropped)\n"
+        f"decisions: {st.decisions_total} — Jev {jev}, LLM {llm}, code {code}; "
+        f"Jev made {100 * jev / model if model else 0:.1f}% of model decisions "
+        f"({100 * jev / st.decisions_total if st.decisions_total else 0:.1f}% of all)\n"
+        f"cost: Jev ${st.jev_cost_usd:.5f} + LLM ${st.llm_cost_usd:.5f} = "
+        f"${st.jev_cost_usd + st.llm_cost_usd:.5f} ({st.jev_calls} Jev calls, "
+        f"{st.llm_calls} LLM calls)\n"
+        f"wall time: {st.wall_time_s:.1f}s"
+    )
+    if results.aggregates.get("__failed_nodes"):
+        for f in results.aggregates["__failed_nodes"]:
+            console.print(f"[red]{f['node']} ({f['tool']}) {f['status']}:[/red] {f['error']}")
+    ranked = _ranked_table(results, plan)
+    if ranked is not None:
+        console.print(ranked)
+    themes = _theme_counts(results)
+    if themes:
+        console.print("themes: " + ", ".join(f"{k} {v}" for k, v in themes.items()))
+    console.print(f"results: {path}")
+
+
+def _node_printer(bar: Progress) -> Callable[[dict[str, Any]], None]:
+    """Live lines per node (running → done) plus a transient per-item progress bar."""
+    tasks: dict[str, Any] = {}
+
+    def on_node(ev: dict[str, Any]) -> None:
+        tag = f"{ev['node']} {ev['tool']}"
+        status = ev["status"]
+        if status == "running" and "done" not in ev:
+            console.print(f"[cyan]▶ {tag}[/cyan] — {ev.get('why', '')}")
+            tasks[ev["node"]] = bar.add_task(tag, total=None)
+        elif status == "running":
+            bar.update(tasks[ev["node"]], completed=ev["done"], total=ev["items"])
+        elif status == "done":
+            if ev["node"] in tasks:
+                bar.remove_task(tasks.pop(ev["node"]))
+            r = ev["report"]
+            console.print(
+                f"[green]✓ {tag}[/green] {r['items_in']}→{r['items_out']} items · "
+                f"jev {r['jev_decisions']} · llm {r['llm_decisions']} · code {r['code_ops']}"
+                f"{' · low ' + str(r['low_confidence']) if r['low_confidence'] else ''}"
+                f" · {r['duration_ms'] / 1000:.1f}s"
+            )
+            for note in r.get("notes", [])[:3]:
+                console.print(f"    [dim]{note}[/dim]")
+        else:
+            if ev["node"] in tasks:
+                bar.remove_task(tasks.pop(ev["node"]))
+            console.print(f"[red]✗ {tag} {status}:[/red] {ev.get('error')}")
+
+    return on_node
+
+
+async def cmd_run(args: argparse.Namespace) -> int:
+    from foreman.contracts import load_items
+    from foreman.core.context import make_context
+    from foreman.graph.executor import execute, run_dir
+    from foreman.graph.plan import Plan, PlanError, sample_fields, validate_plan
+    from foreman.graph.planner import make_plan
+
+    if not args.plan and not args.job:
+        console.print("[red]give --job (to plan) or --plan[/red]")
+        return 2
+    if not args.fake:
+        _start_openai_import()
+    run = load_items(args.items, job=args.job or "")
+    n_in = len(run.items)
+    ctx = await make_context(run_id=run.run_id, threshold=args.threshold, fake=args.fake)
+    mode = "fake" if args.fake else "live"
+    console.print(f"run {run.run_id}: {n_in} items ({mode}, threshold {ctx.threshold})")
+
+    try:
+        if args.plan:
+            plan = Plan.model_validate_json(Path(args.plan).read_text(encoding="utf-8"))
+            if args.job:
+                plan.job = args.job
+            problems = validate_plan(plan, sample_fields(run.items))
+            if problems:
+                console.print(f"[red]{args.plan} is not valid for these items:[/red]")
+                for p in problems:
+                    console.print(f"  - {p}")
+                return 2
+        else:
+            t0 = time.perf_counter()
+            try:
+                with console.status("planning..."):
+                    plan = await make_plan(args.job, run, ctx)
+            except PlanError as e:
+                console.print(f"[red]planning failed:[/red] {e}")
+                for p in e.problems:
+                    console.print(f"  - {p}")
+                return 1
+            console.print(f"planned in {time.perf_counter() - t0:.1f}s")
+        console.print(_plan_table(plan))
+        if args.save_plan:
+            out = Path(args.save_plan)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+            console.print(f"saved plan to {out}")
+
+        with Progress(console=console, transient=True) as bar:
+            results = await execute(plan, run, ctx, on_node=_node_printer(bar))
+    finally:
+        await ctx.aclose()
+
+    _print_summary(results, plan, n_in, run_dir(run.run_id) / "results.json")
+    return 0
+
+
+# --------------------------------------------------------------------------- replay-export
+
+REPLAY_FORMATS = ("xlsx", "pdf", "docx")
+
+
+def _replay_entry(name: str, out: Path, results: Any, files: dict[str, Any]) -> dict[str, Any]:
+    """One row of `index.json`: what the static site lists before loading a bundle."""
+    st = results.stats
+    jev, llm = st.by.get("jev", 0), st.by.get("llm", 0)
+    n_items = len(results.items) + len(results.dropped)
+    events = out / "events.jsonl"
+    if events.exists():  # the plan event knows the true input count (after MAX_ITEMS)
+        first = json.loads(events.read_text(encoding="utf-8").splitlines()[0])
+        if first.get("event") == "plan":
+            n_items = first["data"].get("items_total", n_items)
+    return {
+        "name": name,
+        "run_id": results.run_id,
+        "job": results.job,
+        "items": n_items,
+        "duration_s": round(st.wall_time_s, 1),
+        "cost_usd": round(st.jev_cost_usd + st.llm_cost_usd, 6),
+        "jev_cost_usd": round(st.jev_cost_usd, 6),
+        "llm_cost_usd": round(st.llm_cost_usd, 6),
+        "decisions": {"total": st.decisions_total, **st.by},
+        "jev_share": round(jev / st.decisions_total, 4) if st.decisions_total else 0.0,
+        "jev_share_of_model": round(jev / (jev + llm), 4) if jev + llm else 0.0,
+        "threshold": results.threshold,
+        "finished_at": results.finished_at,
+        "files": files,
+    }
+
+
+async def _write_exports(results: Any, out: Path) -> dict[str, str]:
+    """Minh's exports, when `foreman.format.export` exists; skips formats that fail."""
+    from foreman.api.extract import load_optional
+
+    export = load_optional("foreman.format", "export")
+    if export is None:
+        console.print("[yellow]foreman.format.export not built yet; no export files[/yellow]")
+        return {}
+    written: dict[str, str] = {}
+    for fmt in REPLAY_FORMATS:
+        try:
+            data = export(results, fmt, summary=results.aggregates.get("summary"))
+            if inspect.isawaitable(data):
+                data = await data
+        except Exception as e:  # noqa: BLE001 - one missing format must not stop the bundle
+            console.print(f"[yellow]{fmt} export skipped:[/yellow] {type(e).__name__}: {e}")
+            continue
+        if data:
+            (out / f"export.{fmt}").write_bytes(bytes(data))
+            written[fmt] = f"export.{fmt}"
+    return written
+
+
+async def cmd_replay_export(args: argparse.Namespace) -> int:
+    """Copy a finished run into a static replay bundle and list it in index.json."""
+    import shutil
+
+    from foreman.contracts import ResultsFile
+    from foreman.graph.executor import run_dir
+
+    src = run_dir(args.run_id)
+    results_path = src / "results.json"
+    if not results_path.exists():
+        console.print(f"[red]{results_path} not found; is the run finished?[/red]")
+        return 2
+    out = Path(args.out)
+    name = args.name or out.name
+    out.mkdir(parents=True, exist_ok=True)
+    results = ResultsFile.model_validate_json(results_path.read_text(encoding="utf-8"))
+
+    files: dict[str, Any] = {}
+    for fname, key in (
+        ("events.jsonl", "events"),
+        ("results.json", "results"),
+        ("decisions.jsonl", "decisions"),
+    ):
+        if (src / fname).exists():
+            shutil.copy2(src / fname, out / fname)
+            files[key] = fname
+        else:
+            console.print(f"[yellow]{src / fname} missing (CLI runs record no events)[/yellow]")
+    inputs = sorted((src / "input").glob("*")) if (src / "input").is_dir() else []
+    if inputs:
+        (out / "input").mkdir(exist_ok=True)
+        shutil.copy2(inputs[0], out / "input" / inputs[0].name)
+        files["input"] = f"input/{inputs[0].name}"
+    files["exports"] = await _write_exports(results, out)
+
+    entry = _replay_entry(name, out, results, files)
+    index_path = out.parent / "index.json"
+    index: dict[str, Any] = {"version": 1, "replays": []}
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["replays"] = [r for r in index.get("replays", []) if r.get("name") != name] + [entry]
+    index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+
+    size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
+    console.print(f"wrote {out} ({size / 1e6:.1f} MB) and {index_path}")
+    console.print_json(json.dumps({k: v for k, v in entry.items() if k != "files"}))
+    return 0
+
+
 # --------------------------------------------------------------------------- catalog
 
 
@@ -274,7 +585,24 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--job", default="", help="job text recorded in results.json")
     t.set_defaults(fn=cmd_tool)
 
+    r = sub.add_parser("run", help="plan (or load) and execute a job end to end")
+    r.add_argument("--items", required=True, help="path to items.json")
+    r.add_argument("--job", default="", help="the job in plain English (needed without --plan)")
+    r.add_argument("--plan", default=None, help="run this plan.json instead of planning")
+    r.add_argument("--save-plan", default=None, help="also write the plan to this path")
+    r.add_argument(
+        "--threshold", type=float, default=None, help="confidence threshold (default from .env)"
+    )
+    r.add_argument("--fake", action="store_true", help="use FakeJev/FakeLLM (offline)")
+    r.set_defaults(fn=cmd_run)
+
     sub.add_parser("catalog", help="print the tool catalog").set_defaults(fn=cmd_catalog)
+
+    x = sub.add_parser("replay-export", help="copy a finished run into a static replay bundle")
+    x.add_argument("run_id")
+    x.add_argument("--out", required=True, help="bundle dir, e.g. web/public/replays/<name>/")
+    x.add_argument("--name", default=None, help="replay name (default: the --out dir name)")
+    x.set_defaults(fn=cmd_replay_export)
     return p
 
 

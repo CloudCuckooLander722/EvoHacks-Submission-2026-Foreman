@@ -39,9 +39,8 @@ Math, counting and dates are always done in code, never by a model.
 | rank | Sort items by a fuzzy quality like urgency |
 | verify | Check claims against a source |
 | calculate | Totals, counts, group-bys, date math (pure code) |
-| extract | Pull fields like vendor, amount or date out of messy text |
-| find | Locate the passage that answers a question in a long document |
-| guard | Check a proposed action is safe before it happens |
+
+Next: extract, find, guard.
 
 ## Example
 
@@ -63,7 +62,48 @@ pytest -q                   # offline tests
 python -m foreman.dev ping  # checks the API keys
 ```
 
+### Hero data
+
+10,000 Medium app reviews (CC0) are already in [`data/hero/`](data/hero/README.md), with a 1,000-review subset. To rebuild them:
+
+```bash
+pip install huggingface_hub
+python scripts/get_hero_data.py
+```
+
+Run the hero job from the CLI (live, needs keys):
+
+```bash
+python -m foreman.dev run --items data/hero/reviews_1k.json --plan data/plans/reviews_backlog.json \
+  --job "Turn these app reviews into a ranked bug backlog"
+python -m foreman.dev run --items data/hero/reviews_1k.json --job "<any plain-English job>"  # planner
+```
+
+Real numbers from these runs are in [`docs/RESULTS.md`](docs/RESULTS.md).
+
+### foreman-api
+
+```bash
+uvicorn foreman.api.app:app --reload --port 8000
+```
+
+The endpoints and SSE events are listed in [`docs/MINH_PLAN.md` §D](docs/MINH_PLAN.md). A quick run from the terminal:
+
+```bash
+curl -F file=@data/hero/reviews_1k.json -F plan=reviews_backlog -F threshold=0.7 localhost:8000/runs
+curl -N localhost:8000/runs/<run_id>/events     # plan, node, decision, stats, done
+curl localhost:8000/runs/<run_id>/results
+```
+
+`plan` is optional (a saved plan in `data/plans/`); without it, send `job` and the planner writes the plan. Settings in `.env`: `ALLOWED_ORIGINS` (comma-separated, added to `http://localhost:5173`), `MAX_ACTIVE_RUNS` (default 2), `MAX_ITEMS` per run (default 2000), `MAX_UPLOAD_MB` (default 50).
+
+Each API run also records `runs/<run_id>/events.jsonl`. Turn a finished run into a replay bundle for the static site (format in [`docs/CONTRACTS.md`](docs/CONTRACTS.md)):
+
+```bash
+python -m foreman.dev replay-export <run_id> --out web/public/replays/<name>/
+```
+
 ## Team
 
-- **Nathan:** planner, tools, node state, executor, frontend.
-- **Minh:** file extraction, formatting and exports.
+- **Minh:** extraction, formatting, frontend.
+- **Nathan:** engine, tools, planner, API.

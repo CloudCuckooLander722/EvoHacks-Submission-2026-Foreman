@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "replays": [
+    {
+      "name": "reviews-1k",
+      "run_id": "r_8e62399f",
+      "job": "Turn these app reviews into a ranked bug backlog",
+      "items": 1000,
+      "duration_s": 117.1,
+      "cost_usd": 0.106869,
+      "jev_cost_usd": 0.051219,
+      "llm_cost_usd": 0.055651,
+      "decisions": {
+        "total": 3349,
+        "jev": 2559,
+        "llm": 785,
+        "code": 5
+      },
+      "jev_share": 0.7641,
+      "jev_share_of_model": 0.7653,
+      "threshold": 0.7,
+      "finished_at": "2026-10-11T06:38:43Z",
+      "files": {
+        "events": "events.jsonl",
+        "results": "results.json",
+        "decisions": "decisions.jsonl",
+        "input": "input/reviews_1k.json",
+        "exports": {}
+      }
+    }
+  ]
+}
