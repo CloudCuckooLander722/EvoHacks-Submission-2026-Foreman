@@ -1,4 +1,5 @@
 import { useRef, useState, type DragEvent, type FormEvent } from 'react'
+import { USE_MOCKS } from '../../config'
 export const DEMO_JOB = 'Turn these app reviews into a ranked bug backlog'
 
 /** Saved plans in data/plans/; '' lets the LLM planner write a plan from the job text. */
@@ -97,7 +98,13 @@ export function JobComposer({ busy, apiOk, onSubmit, onReplay }: Props) {
       </div>
       <p className="hint">Jev answers below this confidence get a second opinion from the LLM.</p>
 
-      {apiOk === false && (
+      {apiOk === false && USE_MOCKS && (
+        <p className="hint">
+          This is the static demo: press <strong>Replay a recorded run</strong> to watch a real 1,000-review run. To run
+          your own files, clone the repo and start <code>scripts/demo.sh</code>.
+        </p>
+      )}
+      {apiOk === false && !USE_MOCKS && (
         <p className="card error" role="alert">
           The Foreman API isn't reachable on localhost:8000, so live runs are off. Start it with{' '}
           <code>scripts/demo.sh</code>, or replay a recorded run below (no keys needed).
@@ -107,7 +114,7 @@ export function JobComposer({ busy, apiOk, onSubmit, onReplay }: Props) {
         <button className="primary" type="submit" disabled={!canSubmit}>
           {busy ? 'Running…' : apiOk === null ? 'Checking API…' : 'Run'}
         </button>
-        <button className="ghost" type="button" disabled={busy} onClick={() => onReplay(threshold)}>
+        <button className={apiOk === false ? 'primary' : 'ghost'} type="button" disabled={busy} onClick={() => onReplay(threshold)}>
           Replay a recorded run
         </button>
       </div>
