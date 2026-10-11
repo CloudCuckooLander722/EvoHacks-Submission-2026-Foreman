@@ -1,8 +1,21 @@
 import os
 from typesafe_sdk import TypeSafeClient, Choice, Noul, TypeSafeError
+from typing import Literal, get_args
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 MAX_STATE_CHARS = 4000
-FILE_TYPES = ["txt", "pdf", "docx", "csv", "json", "wav", "mp3", "mp4"]
+FileType = Literal["txt", "pdf", "docx", "csv", "json", "wav", "mp3", "mp4"]
+FILE_TYPES = list(get_args(FileType))
+
+class OutputSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1, description="The full text extracted from the input file.")
+    file_type: FileType | None = Field(description="The detected type of the input file, or None if it couldn't be determined.")
+    validity: float = Field(ge=0.0, le=1.0, description="Probability (0 to 1) that the extracted text is readable and not corrupted.")
+    warning_message: str = Field(default="", description="Any quality or truncation warnings about the extracted text; empty if none.")
+
+
 
 def file_reader(file_path: str):
     """
@@ -12,7 +25,7 @@ def file_reader(file_path: str):
         file_path (str): The path to the file to be read.
 
     Returns:
-        dict | None: The contents of the file plus its detected type, validity score and any
+        dict | None: An OutputSchema dict: the contents of the file plus its detected type, validity score and any
         warning, or None if the file could not be read or failed the validity check.
     """
     # Edge case: no path given
@@ -94,9 +107,17 @@ def file_reader(file_path: str):
         print("Error: Too garbage for Jev to read. Please try again.")
         return None
 
-    return {
-        "content": content,
-        "file_type": file_type,
-        "validity": is_valid_prob,
-        "warning_message": warning_message.strip(),
-    }
+    # Edge case: API returned values outside the schema (e.g. an unknown file type)
+    try:
+        output = OutputSchema(
+            content=content,
+            file_type=file_type,
+            validity=is_valid_prob,
+            warning_message=warning_message.strip(),
+        )
+    except ValidationError as e:
+        print(f"Error: Output failed validation: {e}")
+        return None
+
+    return output.model_dump()
+
