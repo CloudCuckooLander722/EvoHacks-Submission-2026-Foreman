@@ -141,30 +141,82 @@ def _state_text(state: Any) -> str:
     return state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, default=str)
 
 
-def _decide_prompt(state: Any, question: Question) -> tuple[str, str]:
-    """A compact prompt that demands only the JSON shape for this question type."""
-    system = (
-        "You make one careful judgment about the STATE below. "
-        "Reply with only a JSON object, no explanation."
-    )
-    lines = [f"STATE:\n{_state_text(state)}", "", f"QUESTION: {question.instructions}"]
-    if isinstance(question, Choice):
-        lines.append("OPTIONS:")
-        for key, desc in question.options.items():
-            lines.append(f"- {key}" + (f": {desc}" if desc else ""))
-        lines.append('Reply with exactly {"choice": "<one of the option keys above>"}.')
-    elif isinstance(question, Score):
-        lines.append("LEVELS (low to high):")
-        for i, desc in enumerate(question.levels):
-            lines.append(f"{i}: {desc}")
-        lines.append(f'Reply with exactly {{"level": <integer 0..{len(question.levels) - 1}>}}.')
+DECIDE_SYSTEM = (
+    "You answer one question about the TEXT you are given. Judge only what the TEXT "
+    "explicitly states. Do not infer, guess or assume anything the TEXT does not say: "
+    "if the TEXT does not mention something, treat it as absent. Reply with only a JSON "
+    "object, no explanation."
+)
+
+# The model matched "I'd use it every day" to "every time" on a frequency-of-problem
+# scale; making the "question doesn't apply" case explicit fixed it.
+SCORE_GUIDE = (
+    "First check whether the TEXT describes the thing the question asks about (for "
+    "example, if the question asks about a problem, does the TEXT describe a problem?). "
+    "If it does not, pick the level for that case, even when other words in the TEXT "
+    "resemble a level's description. Otherwise pick the level whose description "
+    "matches what the TEXT states."
+)
+
+
+def _score_lines(q: Score) -> list[str]:
+    top = len(q.levels) - 1
+    lines = [f"LEVELS (0 = lowest, {top} = highest):"]
+    lines += [f"{i}: {desc}" for i, desc in enumerate(q.levels)]
+    numbers = ", ".join(str(i) for i in range(len(q.levels)))
+    return [
+        *lines,
+        "",
+        f"Question again: {q.instructions}",
+        SCORE_GUIDE,
+        f'Reply with exactly {{"level": <number from the list: {numbers}>}}.',
+    ]
+
+
+def _choice_lines(q: Choice) -> list[str]:
+    lines = ["OPTIONS (key: description):"]
+    lines += [f"{key}: {desc or '(no description)'}" for key, desc in q.options.items()]
+    keys = ", ".join(q.options)
+    return [
+        *lines,
+        "",
+        f'Reply with exactly {{"choice": "<key>"}}, where <key> is one of: {keys}.',
+    ]
+
+
+def _noul_lines(q: Noul) -> list[str]:
+    true = q.true or "Yes: the TEXT states that the answer to the question is yes."
+    if q.false:
+        false = q.false
+    elif q.true:
+        false = "The description for true does not apply to what the TEXT states."
     else:
-        if question.true:
-            lines.append(f"Answer true if: {question.true}")
-        if question.false:
-            lines.append(f"Answer false if: {question.false}")
-        lines.append('Reply with exactly {"answer": true} or {"answer": false}.')
-    return system, "\n".join(lines)
+        false = "No: the answer is no, or the TEXT does not state it."
+    return [
+        f"true means: {true}",
+        f"false means: {false}",
+        "",
+        'Reply with exactly {"answer": true} or {"answer": false}.',
+    ]
+
+
+def _decide_prompt(state: Any, question: Question) -> tuple[str, str]:
+    """Fallback prompt: numbered levels / keyed options / defined true-false, JSON only.
+
+    The model must see exactly the scale Jev saw and nothing to read between the lines;
+    a fallback that infers ("billing issue" -> "charged wrongly") is worse than Jev.
+    """
+    label = "TEXT:" if isinstance(state, str) else "TEXT (JSON; parts are named by key):"
+    lines = [label, '"""', _state_text(state), '"""', "", f"QUESTION: {question.instructions}"]
+    if isinstance(question, Choice):
+        lines += _choice_lines(question)
+    elif isinstance(question, Score):
+        lines += _score_lines(question)
+    elif isinstance(question, Noul):
+        lines += _noul_lines(question)
+    else:
+        raise TypeError(f"not a question: {question!r}")
+    return DECIDE_SYSTEM, "\n".join(lines)
 
 
 def _to_answer(question: Question, obj: dict[str, Any]) -> Answer:

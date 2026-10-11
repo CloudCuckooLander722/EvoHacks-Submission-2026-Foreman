@@ -8,7 +8,15 @@ import pytest
 from pydantic import SecretStr
 
 from foreman.config import Settings, get_settings
-from foreman.core.llm import LLMClient, LLMError, parse_json_object, track_usage
+from foreman.core.llm import (
+    DECIDE_SYSTEM,
+    SCORE_GUIDE,
+    LLMClient,
+    LLMError,
+    _decide_prompt,
+    parse_json_object,
+    track_usage,
+)
 from foreman.core.questions import Choice, Noul, Score
 
 
@@ -124,7 +132,9 @@ async def test_decide_choice_validates_keys() -> None:
         "llm",
     )
     prompt = sdk.requests[0]["messages"][1]["content"]
-    assert "crash" in prompt and "- bug: Broken" in prompt and "- praise" in prompt
+    assert "crash" in prompt
+    assert "\nbug: Broken\n" in prompt and "\npraise: (no description)\n" in prompt
+    assert '{"choice": "<key>"}, where <key> is one of: bug, praise.' in prompt
 
 
 async def test_decide_score_and_noul() -> None:
@@ -138,6 +148,67 @@ async def test_decide_score_and_noul() -> None:
     llm, _ = _client('{"answer": false}')
     a = await llm.decide("x", "n", Noul("Spam?"))
     assert a is not None and a.value == 0.0 and a.probabilities == {"true": 0.0, "false": 1.0}
+
+
+def test_prompt_system_forbids_inference() -> None:
+    system, _ = _decide_prompt("x", Noul("Spam?"))
+    assert system == DECIDE_SYSTEM
+    assert "only what the TEXT explicitly states" in system
+    assert "Do not infer" in system and "JSON object" in system
+
+
+def test_prompt_score_numbers_levels_low_to_high() -> None:
+    q = Score("How severe is the problem?", ["No problem", "Minor", "Broken", "Data lost"])
+    _, user = _decide_prompt("Support fixed my billing issue.", q)
+    lines = user.splitlines()
+    assert lines[:4] == ["TEXT:", '"""', "Support fixed my billing issue.", '"""']
+    assert "QUESTION: How severe is the problem?" in lines
+    start = lines.index("LEVELS (0 = lowest, 3 = highest):")
+    assert lines[start + 1 : start + 5] == [
+        "0: No problem",
+        "1: Minor",
+        "2: Broken",
+        "3: Data lost",
+    ]
+    assert "Question again: How severe is the problem?" in lines and SCORE_GUIDE in lines
+    assert lines.index("Question again: How severe is the problem?") > start + 4
+    assert lines[-1] == 'Reply with exactly {"level": <number from the list: 0, 1, 2, 3>}.'
+
+
+def test_prompt_choice_lists_keys_and_descriptions() -> None:
+    q = Choice("Which type?", {"bug": "Something is broken", "other": None})
+    _, user = _decide_prompt("crash", q)
+    assert "OPTIONS (key: description):\nbug: Something is broken\nother: (no description)" in user
+    assert user.endswith(
+        'Reply with exactly {"choice": "<key>"}, where <key> is one of: bug, other.'
+    )
+
+
+@pytest.mark.parametrize(
+    ("q", "true", "false"),
+    [
+        (Noul("Spam?", true="An ad", false="A real review"), "An ad", "A real review"),
+        (
+            Noul("Spam?", true="An ad"),
+            "An ad",
+            "The description for true does not apply to what the TEXT states.",
+        ),
+        (
+            Noul("Spam?"),
+            "Yes: the TEXT states that the answer to the question is yes.",
+            "No: the answer is no, or the TEXT does not state it.",
+        ),
+    ],
+)
+def test_prompt_noul_defines_true_and_false(q, true, false) -> None:
+    _, user = _decide_prompt("buy now", q)
+    assert f"true means: {true}\nfalse means: {false}" in user
+    assert user.endswith('Reply with exactly {"answer": true} or {"answer": false}.')
+
+
+def test_prompt_dict_state_is_json() -> None:
+    _, user = _decide_prompt({"record_a": "x"}, Noul("Same?"))
+    assert user.startswith('TEXT (JSON; parts are named by key):\n"""\n{"record_a": "x"}\n"""')
 
 
 async def test_decide_returns_none_on_garbage_and_errors() -> None:
