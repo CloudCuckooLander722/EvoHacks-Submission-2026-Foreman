@@ -352,3 +352,122 @@ async def test_block_by_in_records_mode() -> None:
 def test_description_mentions_issues_and_block_by() -> None:
     desc = DedupeTool.description
     assert '"issues"' in desc and "always set `block_by`" in desc
+
+
+# --------------------------------------------------------------------------- no chaining, top-k, skip
+
+ACME = [("x", "Acme Corp"), ("y", "Acme Corporation"), ("z", "Acme Corporation Ltd")]
+
+
+def _acme(extra_fields: dict[str, dict] | None = None) -> RunState:
+    extra_fields = extra_fields or {}
+    items = [
+        ItemState(id=k, text=v, fields={"vendor": v, **extra_fields.get(k, {})}) for k, v in ACME
+    ]
+    return RunState(run_id="r", job="j", items=items)
+
+
+def _acme_rule(levels: dict[frozenset[str], float]):
+    by_vendor = {v: k for k, v in ACME}
+
+    def rule(state, qid, q):
+        pair = frozenset(by_vendor[state[r]["vendor"]] for r in ("record_a", "record_b"))
+        return FakeAnswer(levels.get(pair, 0.0), confidence=0.9)
+
+    return rule
+
+
+async def _acme_dedupe(run: RunState, levels: dict[frozenset[str], float]):
+    ctx = await make_context(threshold=0.7, jev=FakeJev(_acme_rule(levels)), llm=FakeLLM())
+    params = DedupeParams(key_fields=["vendor"], min_similarity=0, check_conflicts=False)
+    report = await DedupeTool().run(run, params, ctx)
+    return report, {i.id: i.fields for i in run.items}
+
+
+async def test_no_transitive_chaining() -> None:
+    # x~y and y~z match, x and z do not: z must not be pulled into x's cluster through y.
+    levels = {frozenset("xy"): 4.0, frozenset("yz"): 3.6, frozenset("xz"): 0.0}
+    report, f = await _acme_dedupe(_acme(), levels)
+    assert f["x"]["dup_group"] == f["y"]["dup_group"] == "dup-1"
+    assert f["x"]["dup_group_canonical"] is True and f["y"]["dup_group_canonical"] is False
+    assert f["x"]["dup_group_count"] == f["y"]["dup_group_count"] == 2
+    assert f["z"]["dup_group"] is None
+    assert f["z"]["dup_group_canonical"] is True and f["z"]["dup_group_count"] == 1
+    assert "1 matched pairs not merged" in " ".join(report.notes)
+    assert "2 unique of 3 items" in report.notes
+
+
+async def test_member_joins_through_the_canonical() -> None:
+    # Same matches, but y is the most complete record: it founds the cluster as canonical,
+    # and z matched y directly, so z joins. Every member matched the canonical itself.
+    levels = {frozenset("xy"): 4.0, frozenset("yz"): 3.6, frozenset("xz"): 0.0}
+    run = _acme({"y": {"email": "ap@acme.com"}})
+    _, f = await _acme_dedupe(run, levels)
+    assert f["x"]["dup_group"] == f["y"]["dup_group"] == f["z"]["dup_group"] == "dup-1"
+    assert [f[k]["dup_group_canonical"] for k in "xyz"] == [False, True, False]
+    assert all(f[k]["dup_group_count"] == 3 for k in "xyz")
+    assert run.aggregates["dup_group_clusters"][0]["canonical_id"] == "y"
+
+
+async def test_strongest_match_founds_the_cluster() -> None:
+    # y~z is the strongest match, so y and z cluster first (y canonical, as the earlier of
+    # two equally complete records); x matched y more weakly and joins through y.
+    levels = {frozenset("yz"): 4.0, frozenset("xy"): 3.2, frozenset("xz"): 3.2}
+    run = _acme()
+    await _acme_dedupe(run, levels)
+    [cluster] = run.aggregates["dup_group_clusters"]
+    assert cluster["canonical_id"] == "y" and cluster["member_ids"] == ["x", "y", "z"]
+
+
+def test_top_neighbors_keeps_k_per_item() -> None:
+    pairs = [(0, 1, 99.0), (0, 2, 90.0), (0, 3, 80.0), (1, 2, 70.0), (2, 3, 60.0)]
+    kept = dd.top_neighbors(pairs, 1)
+    # 0's best is 1, 1's best is 0, 2's best is 0, 3's best is 0.
+    assert kept == [(0, 1, 99.0), (0, 2, 90.0), (0, 3, 80.0)]
+    assert dd.top_neighbors(pairs, None) == pairs
+    # k=2: 2's top two are 0 and 1, but (2, 3) stays because it is in 3's top two.
+    assert dd.top_neighbors(pairs, 2) == pairs
+    assert dd.top_neighbors(pairs + [(1, 3, 10.0)], 2) == pairs  # 10.0 is nobody's top two
+
+
+async def test_max_neighbors_bounds_pairs_per_item() -> None:
+    items = [ItemState(id=f"i{k}", text="", fields={"vendor": f"acme store {k}"}) for k in range(8)]
+
+    async def judged(**params) -> tuple[int, list[str]]:
+        run = RunState(run_id="r", job="j", items=[i.model_copy(deep=True) for i in items])
+        jev = FakeJev(lambda s, qid, q: FakeAnswer(0.0, confidence=0.9))
+        ctx = await make_context(threshold=0.7, jev=jev, llm=FakeLLM())
+        p = DedupeParams(key_fields=["vendor"], min_similarity=0, check_conflicts=False, **params)
+        report = await DedupeTool().run(run, p, ctx)
+        return len(jev.calls), report.notes
+
+    n_all, _ = await judged(max_neighbors=None)
+    n_top, notes = await judged(max_neighbors=2)
+    assert n_all == 28  # every pair of 8
+    assert n_top <= 8 * 2 and n_top < n_all
+    assert any(f"{n_top} of 28 similar pairs" in n for n in notes)
+    assert DedupeParams().max_neighbors == 5
+
+
+async def test_skip_blocks_are_not_deduped() -> None:
+    run = _reports()
+    for k in ("love1", "love2"):
+        run.items[list(REPORTS).index(k)].fields["theme"] = dd.NO_THEME
+    levels = {frozenset(("love1", "love2")): 3.0, frozenset(("cam1", "cam2")): 3.0}
+    report, jev = await _issues(run, _issue_rule(levels), min_similarity=0, block_by="theme")
+    text = {k: t for k, (t, _) in REPORTS.items()}
+    compared = {frozenset((s["text_a"], s["text_b"])) for s, _ in jev.calls}
+    assert compared == {frozenset((text["cam1"], text["cam2"]))}
+    f = {i.id: i.fields for i in run.items}
+    for k in ("love1", "love2"):  # processed singletons, so rank's canonical filter keeps them
+        assert f[k]["dup_group"] is None
+        assert f[k]["dup_group_canonical"] is True and f[k]["dup_group_count"] == 1
+    assert any("2 items in none_of_these were not deduped" in n for n in report.notes)
+
+    run = _reports()
+    for k in ("love1", "love2"):
+        run.items[list(REPORTS).index(k)].fields["theme"] = dd.NO_THEME
+    _, jev = await _issues(
+        run, _issue_rule(levels), min_similarity=0, block_by="theme", skip_blocks=[]
+    )
+    assert len(jev.calls) == 2  # now the none_of_these pair is compared too
