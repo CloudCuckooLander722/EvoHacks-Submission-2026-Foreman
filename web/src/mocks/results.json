@@ -1,0 +1,1223 @@
+{
+ "run_id": "r_mock0001",
+ "job": "Turn these reviews into a backlog: split bugs from feature requests, group into themes, score urgency, rank by urgency, and count by type and theme.",
+ "threshold": 0.7,
+ "started_at": "2026-10-11T06:31:10Z",
+ "finished_at": "2026-10-11T06:31:12Z",
+ "plan": {
+  "job": "Turn these reviews into a backlog: split bugs from feature requests, group into themes, score urgency, rank by urgency, and count by type and theme.",
+  "nodes": [
+   {
+    "id": "n1",
+    "tool": "classify",
+    "params": {
+     "input_field": "text",
+     "output_field": "type",
+     "where": null,
+     "options": {
+      "bug": "Something is broken, crashes or fails",
+      "feature_request": "Asks for a new feature or option",
+      "praise": "Positive feedback, great, love"
+     },
+     "taxonomy": null,
+     "instructions": null,
+     "add_other": true,
+     "beam_width": 2,
+     "top_n_probs": 3
+    },
+    "why": "Split bugs from feature requests and praise."
+   },
+   {
+    "id": "n2",
+    "tool": "group",
+    "params": {
+     "input_field": "text",
+     "output_field": "theme",
+     "where": null,
+     "themes": [
+      {
+       "name": "Camera",
+       "description": "Camera crashes or problems"
+      },
+      {
+       "name": "Login",
+       "description": "Login, password or account problems"
+      },
+      {
+       "name": "Requests",
+       "description": "Requests for new features"
+      }
+     ],
+     "n_themes": 8,
+     "focus": null,
+     "sample_size": 60,
+     "allow_new_themes": true,
+     "max_new_themes": 3,
+     "outlier_min": 10,
+     "seed": 7
+    },
+    "why": "Group reviews into themes so related problems sit together."
+   },
+   {
+    "id": "n3",
+    "tool": "score",
+    "params": {
+     "input_field": "text",
+     "output_field": "urgency",
+     "where": null,
+     "dimensions": [
+      {
+       "name": "severity",
+       "instructions": "How severe is the problem described in the text?",
+       "levels": [
+        "No problem",
+        "Minor annoyance",
+        "Feature broken",
+        "Crash or data loss"
+       ],
+       "weight": 2.0
+      },
+      {
+       "name": "reach",
+       "instructions": "How many users does the problem likely affect?",
+       "levels": [
+        "One user",
+        "Some users",
+        "Most users"
+       ],
+       "weight": 1.0
+      }
+     ],
+     "scale": 100.0
+    },
+    "why": "Score urgency from severity and reach."
+   },
+   {
+    "id": "n4",
+    "tool": "rank",
+    "params": {
+     "input_field": "text",
+     "output_field": "rank",
+     "where": null,
+     "criterion": "urgency",
+     "levels": null,
+     "score_field": "urgency",
+     "descending": true,
+     "top_k": 10,
+     "tie_break": true,
+     "tie_margin": 0.05,
+     "max_tiebreaks": 200
+    },
+    "why": "Order the backlog by urgency."
+   },
+   {
+    "id": "n5",
+    "tool": "calculate",
+    "params": {
+     "input_field": "text",
+     "output_field": "calc",
+     "where": null,
+     "operations": [
+      {
+       "op": "group_count",
+       "as": "type_counts",
+       "field": null,
+       "a": null,
+       "b": null,
+       "by": "type",
+       "n": null,
+       "edges": null,
+       "labels": null,
+       "ndigits": null,
+       "desc": true,
+       "where": null
+      },
+      {
+       "op": "group_count",
+       "as": "theme_counts",
+       "field": null,
+       "a": null,
+       "b": null,
+       "by": "theme",
+       "n": null,
+       "edges": null,
+       "labels": null,
+       "ndigits": null,
+       "desc": true,
+       "where": null
+      }
+     ],
+     "today": null
+    },
+    "why": "Count items by type and theme for the charts."
+   }
+  ]
+ },
+ "items": [
+  {
+   "id": "row-2",
+   "text": "App crashes every time I open the camera. Pixel 8, latest update.",
+   "fields": {
+    "rating": 1,
+    "date": "2026-09-30",
+    "author": "kim_88",
+    "type": "bug",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "bug": 0.8,
+     "feature_request": 0.067,
+     "praise": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 0.9,
+    "theme__by": "jev",
+    "urgency_severity": 100.0,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 83.3,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 1.0,
+    "rank": 1,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 2
+   }
+  },
+  {
+   "id": "row-3",
+   "text": "Camera crashes the whole app on my Pixel 8 since the last update. Unusable.",
+   "fields": {
+    "rating": 1,
+    "date": "2026-10-01",
+    "author": "dev_rob",
+    "type": "bug",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "bug": 0.8,
+     "feature_request": 0.067,
+     "praise": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 0.9,
+    "theme__by": "jev",
+    "urgency_severity": 100.0,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 83.3,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 1.0,
+    "rank": 2,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 3
+   }
+  },
+  {
+   "id": "row-4",
+   "text": "Since updating, opening the camera makes the app crash immediately (Pixel 8 Pro).",
+   "fields": {
+    "rating": 2,
+    "date": "2026-10-02",
+    "author": "marta.s",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 0.9,
+    "theme__by": "jev",
+    "urgency_severity": 100.0,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 83.3,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 1.0,
+    "rank": 3,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 4
+   }
+  },
+  {
+   "id": "row-5",
+   "text": "Absolutely love this app. The new editor is fast and the filters look great.",
+   "fields": {
+    "rating": 5,
+    "date": "2026-09-12",
+    "author": "sunny_day",
+    "type": "praise",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "praise": 0.8,
+     "bug": 0.067,
+     "feature_request": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 5,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 5
+   }
+  },
+  {
+   "id": "row-6",
+   "text": "Really solid app. Would be perfect with a dark mode option.",
+   "fields": {
+    "rating": 4,
+    "date": "2026-09-14",
+    "author": "j.chen",
+    "type": "feature_request",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "feature_request": 0.8,
+     "bug": 0.067,
+     "praise": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 6,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 6
+   }
+  },
+  {
+   "id": "row-7",
+   "text": "Please add dark mode! My eyes hurt at night.",
+   "fields": {
+    "rating": 3,
+    "date": "2026-09-15",
+    "author": "alex_w",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 7,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 7
+   }
+  },
+  {
+   "id": "row-8",
+   "text": "I keep getting logged out every few hours and have to re-enter my password.",
+   "fields": {
+    "rating": 2,
+    "date": "2026-09-18",
+    "author": "pat_k",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Login",
+    "theme__confidence": 0.9,
+    "theme__by": "jev",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 8,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 8
+   }
+  },
+  {
+   "id": "row-9",
+   "text": "Login with Google fails with 'unknown error'. Tried reinstalling, still broken.",
+   "fields": {
+    "rating": 1,
+    "date": "2026-09-20",
+    "author": "nora1990",
+    "type": "bug",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "bug": 0.8,
+     "feature_request": 0.067,
+     "praise": 0.067
+    },
+    "theme": "Login",
+    "theme__confidence": 0.9,
+    "theme__by": "jev",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 9,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 9
+   }
+  },
+  {
+   "id": "row-10",
+   "text": "Get 90% off designer bags at cheap-bags-outlet.biz !!! Limited offer, click now",
+   "fields": {
+    "rating": 5,
+    "date": "2026-09-21",
+    "author": "BEST DEALS",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 10,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 10
+   }
+  },
+  {
+   "id": "row-11",
+   "text": "Export to PDF works but the fonts come out blurry. Fix please.",
+   "fields": {
+    "rating": 3,
+    "date": "2026-09-22",
+    "author": "lee.m",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 11,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 11
+   }
+  },
+  {
+   "id": "row-12",
+   "text": "Would love an option to export albums as a zip file.",
+   "fields": {
+    "rating": 4,
+    "date": "2026-09-23",
+    "author": "gabriel_r",
+    "type": "feature_request",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "feature_request": 0.8,
+     "bug": 0.067,
+     "praise": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 12,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 12
+   }
+  },
+  {
+   "id": "row-13",
+   "text": "Customer support answered in 10 minutes and fixed my billing issue. Great team!",
+   "fields": {
+    "rating": 5,
+    "date": "2026-09-24",
+    "author": "ana_p",
+    "type": "praise",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "praise": 0.8,
+     "bug": 0.067,
+     "feature_request": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 13,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 13
+   }
+  },
+  {
+   "id": "row-14",
+   "text": "I was charged twice for the yearly subscription and nobody replies to my emails.",
+   "fields": {
+    "rating": 1,
+    "date": "2026-09-25",
+    "author": "tom_h",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 14,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 14
+   }
+  },
+  {
+   "id": "row-15",
+   "text": "The app drains my battery really fast, even when it's in the background.",
+   "fields": {
+    "rating": 2,
+    "date": "2026-09-26",
+    "author": "ivy_q",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 15,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 15
+   }
+  },
+  {
+   "id": "row-16",
+   "text": "Earn $500 daily from home with crypto signals, DM me on telegram @easy_money",
+   "fields": {
+    "rating": 5,
+    "date": "2026-09-26",
+    "author": "crypto_king_77",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 16,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 16
+   }
+  },
+  {
+   "id": "row-17",
+   "text": "Sync between my phone and tablet takes forever, sometimes photos never show up.",
+   "fields": {
+    "rating": 3,
+    "date": "2026-09-27",
+    "author": "ben_o",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 17,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 17
+   }
+  },
+  {
+   "id": "row-18",
+   "text": "Nice update overall. The new onboarding is much clearer than before.",
+   "fields": {
+    "rating": 4,
+    "date": "2026-09-28",
+    "author": "rachel_v",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 18,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 18
+   }
+  },
+  {
+   "id": "row-19",
+   "text": "Notifications arrive hours late, which makes shared albums pretty useless.",
+   "fields": {
+    "rating": 2,
+    "date": "2026-09-29",
+    "author": "omar_z",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 19,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 19
+   }
+  },
+  {
+   "id": "row-20",
+   "text": "Could you add a way to schedule posts? I'd use it every day.",
+   "fields": {
+    "rating": 3,
+    "date": "2026-09-29",
+    "author": "hana_k",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 20,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 20
+   }
+  },
+  {
+   "id": "row-21",
+   "text": "App freezes on the loading screen after the update on iPhone 13. Have to force close.",
+   "fields": {
+    "rating": 1,
+    "date": "2026-10-03",
+    "author": "will_t",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 21,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 21
+   }
+  },
+  {
+   "id": "row-22",
+   "text": "Five stars. Simple, quick, does exactly what I need.",
+   "fields": {
+    "rating": 5,
+    "date": "2026-10-03",
+    "author": "grace_l",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 22,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 22
+   }
+  },
+  {
+   "id": "row-23",
+   "text": "Good app but the search is slow when I have more than 5,000 photos.",
+   "fields": {
+    "rating": 4,
+    "date": "2026-10-04",
+    "author": "mia_d",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 23,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 23
+   }
+  },
+  {
+   "id": "row-24",
+   "text": "Too many ads between photos now. I'd pay to remove them but there's no option.",
+   "fields": {
+    "rating": 2,
+    "date": "2026-10-05",
+    "author": "lucas_f",
+    "type": "feature_request",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "feature_request": 0.8,
+     "bug": 0.067,
+     "praise": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 24,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 24
+   }
+  },
+  {
+   "id": "row-25",
+   "text": "Widgets on the home screen would be a great addition.",
+   "fields": {
+    "rating": 3,
+    "date": "2026-10-06",
+    "author": "sofia_b",
+    "type": "praise",
+    "type__confidence": 0.9,
+    "type__by": "jev",
+    "type__probs": {
+     "praise": 0.8,
+     "bug": 0.067,
+     "feature_request": 0.067
+    },
+    "theme": "Camera",
+    "theme__confidence": 1.0,
+    "theme__by": "llm",
+    "urgency_severity": 66.7,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 61.1,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 0.0,
+    "rank": 25,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 25
+   }
+  },
+  {
+   "id": "row-26",
+   "text": "Deleted my account but you still keep emailing me. How do I get my data removed?",
+   "fields": {
+    "rating": 1,
+    "date": "2026-10-07",
+    "author": "ethan_c",
+    "type": "bug",
+    "type__confidence": 1.0,
+    "type__by": "llm",
+    "type__probs": {
+     "bug": 1.0
+    },
+    "theme": "Login",
+    "theme__confidence": 0.9,
+    "theme__by": "jev",
+    "urgency_severity": 100.0,
+    "urgency_severity__confidence": 0.8,
+    "urgency_reach": 50.0,
+    "urgency_reach__confidence": 0.8,
+    "urgency": 83.3,
+    "urgency__confidence": 0.8,
+    "urgency__by": "jev",
+    "rank_score": 1.0,
+    "rank": 4,
+    "rank__confidence": 1.0,
+    "rank__by": "code"
+   },
+   "meta": {
+    "row": 26
+   }
+  }
+ ],
+ "dropped": [],
+ "aggregates": {
+  "type_counts": {
+   "bug": 19,
+   "feature_request": 3,
+   "praise": 3
+  },
+  "theme_groups": [
+   {
+    "theme": "Camera",
+    "description": "Camera crashes or problems",
+    "count": 22,
+    "example_ids": [
+     "row-2",
+     "row-3",
+     "row-4"
+    ]
+   },
+   {
+    "theme": "Login",
+    "description": "Login, password or account problems",
+    "count": 3,
+    "example_ids": [
+     "row-8",
+     "row-9",
+     "row-26"
+    ]
+   },
+   {
+    "theme": "Requests",
+    "description": "Requests for new features",
+    "count": 0,
+    "example_ids": []
+   }
+  ],
+  "urgency_summary": {
+   "n": 25,
+   "mean": 64.7,
+   "median": 61.1,
+   "min": 61.1,
+   "max": 83.3,
+   "per_dimension_mean": {
+    "severity": 72.0,
+    "reach": 50.0
+   }
+  },
+  "rank_order": [
+   "row-2",
+   "row-3",
+   "row-4",
+   "row-26",
+   "row-5",
+   "row-6",
+   "row-7",
+   "row-8",
+   "row-9",
+   "row-10",
+   "row-11",
+   "row-12",
+   "row-13",
+   "row-14",
+   "row-15",
+   "row-16",
+   "row-17",
+   "row-18",
+   "row-19",
+   "row-20",
+   "row-21",
+   "row-22",
+   "row-23",
+   "row-24",
+   "row-25"
+  ],
+  "theme_counts": {
+   "Camera": 22,
+   "Login": 3
+  },
+  "escalation_curve": [
+   [
+    0.0,
+    0
+   ],
+   [
+    0.05,
+    0
+   ],
+   [
+    0.1,
+    0
+   ],
+   [
+    0.15,
+    0
+   ],
+   [
+    0.2,
+    0
+   ],
+   [
+    0.25,
+    0
+   ],
+   [
+    0.3,
+    0
+   ],
+   [
+    0.35,
+    35
+   ],
+   [
+    0.4,
+    35
+   ],
+   [
+    0.45,
+    35
+   ],
+   [
+    0.5,
+    35
+   ],
+   [
+    0.55,
+    35
+   ],
+   [
+    0.6,
+    35
+   ],
+   [
+    0.65,
+    35
+   ],
+   [
+    0.7,
+    35
+   ],
+   [
+    0.75,
+    35
+   ],
+   [
+    0.8,
+    35
+   ],
+   [
+    0.85,
+    85
+   ],
+   [
+    0.9,
+    85
+   ],
+   [
+    0.95,
+    116
+   ],
+   [
+    1.0,
+    116
+   ]
+  ],
+  "summary": "MOCK SUMMARY (placeholder until summarize() exists). 25 reviews were processed: 19 bugs, 3 feature requests and 3 praise."
+ },
+ "node_reports": [
+  {
+   "node": "n1",
+   "tool": "classify",
+   "items_in": 25,
+   "items_out": 25,
+   "jev_decisions": 9,
+   "llm_decisions": 16,
+   "code_ops": 0,
+   "low_confidence": 0,
+   "duration_ms": 5,
+   "notes": []
+  },
+  {
+   "node": "n2",
+   "tool": "group",
+   "items_in": 25,
+   "items_out": 25,
+   "jev_decisions": 6,
+   "llm_decisions": 19,
+   "code_ops": 0,
+   "low_confidence": 0,
+   "duration_ms": 5,
+   "notes": [
+    "3 themes given; discovery skipped",
+    "refinement: skipped (0 outliers, needs 10)"
+   ]
+  },
+  {
+   "node": "n3",
+   "tool": "score",
+   "items_in": 25,
+   "items_out": 25,
+   "jev_decisions": 50,
+   "llm_decisions": 0,
+   "code_ops": 1,
+   "low_confidence": 0,
+   "duration_ms": 4,
+   "notes": []
+  },
+  {
+   "node": "n4",
+   "tool": "rank",
+   "items_in": 25,
+   "items_out": 25,
+   "jev_decisions": 16,
+   "llm_decisions": 0,
+   "code_ops": 26,
+   "low_confidence": 0,
+   "duration_ms": 10,
+   "notes": [
+    "tie-breaks: 8 run, 0 swapped"
+   ]
+  },
+  {
+   "node": "n5",
+   "tool": "calculate",
+   "items_in": 25,
+   "items_out": 25,
+   "jev_decisions": 0,
+   "llm_decisions": 0,
+   "code_ops": 2,
+   "low_confidence": 0,
+   "duration_ms": 0,
+   "notes": []
+  }
+ ],
+ "stats": {
+  "decisions_total": 119,
+  "by": {
+   "jev": 81,
+   "llm": 35,
+   "code": 3
+  },
+  "low_confidence": 0,
+  "jev_cost_usd": 0.000373,
+  "llm_cost_usd": 0.0,
+  "wall_time_s": 0.162,
+  "jev_calls": 83,
+  "llm_calls": 35
+ },
+ "decisions_file": "runs/r_mock0001/decisions.jsonl"
+}

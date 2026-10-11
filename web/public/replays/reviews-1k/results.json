@@ -37569,7 +37569,8 @@
         1.0,
         2262
       ]
-    ]
+    ],
+    "summary": "Foreman processed 1,000 items with filter, classify, group, dedupe, score, rank, calculate; 951 were kept and 49 dropped. Type counts: praise (405), bug (186), other (169). Theme groups: none_of_these (82), Missing App Features (33), Writing and Editing Broken (25). Jev made 2,353 of the 2,960 model decisions (79.5%), and the LLM made 607. The run took 85.6 s and cost $0.0942."
   },
   "node_reports": [
     {
