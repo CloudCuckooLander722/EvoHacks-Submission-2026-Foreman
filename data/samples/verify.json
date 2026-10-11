@@ -1,0 +1,56 @@
+{
+  "source": {
+    "filename": "support_drafts.csv",
+    "kind": "csv"
+  },
+  "items": [
+    {
+      "id": "row-2",
+      "text": "Hi, my order #4821 arrived yesterday but the blender jar was cracked. I paid $89.99. Can I get a replacement jar?",
+      "fields": {
+        "reply": "Hi there, sorry to hear your order #4821 arrived with a cracked blender jar. We will send you a replacement jar at no cost. Thanks for letting us know."
+      },
+      "meta": {"row": 2}
+    },
+    {
+      "id": "row-3",
+      "text": "I was charged twice for my March subscription. Please refund the duplicate charge of $12.",
+      "fields": {
+        "reply": "We see you were charged twice for your March subscription. We have refunded the duplicate charge of $25 to your card. You will also get three free months as an apology."
+      },
+      "meta": {"row": 3}
+    },
+    {
+      "id": "row-4",
+      "text": "The app logs me out every time I switch to another app on my iPhone 15. Very annoying.",
+      "fields": {
+        "reply": "Thanks for reporting that the app logs you out when you switch apps on your iPhone 15. Our engineers fixed this bug in version 4.2, released last Tuesday. Please update from the App Store."
+      },
+      "meta": {"row": 4}
+    },
+    {
+      "id": "row-5",
+      "text": "Do you ship to Canada? I want to order two of the large planters.",
+      "fields": {
+        "reply": "Yes, we ship to Canada. Shipping takes 5 to 7 business days and is free on orders over $50. Two large planters qualify."
+      },
+      "meta": {"row": 5}
+    },
+    {
+      "id": "row-6",
+      "text": "My package was supposed to arrive on Friday but tracking still says it is in Memphis.",
+      "fields": {
+        "reply": "Sorry about the delay. Your package is still in Memphis according to tracking. It was supposed to arrive on Friday."
+      },
+      "meta": {"row": 6}
+    },
+    {
+      "id": "row-7",
+      "text": "Cancel my account please. I no longer need the service.",
+      "fields": {
+        "reply": "Done."
+      },
+      "meta": {"row": 7}
+    }
+  ]
+}
