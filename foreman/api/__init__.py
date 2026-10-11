@@ -1,1 +1,1 @@
-"""FastAPI app + SSE (built after the graph)."""
+"""FastAPI app + SSE: `uvicorn foreman.api.app:app --port 8000` (see app.py)."""

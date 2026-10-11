@@ -4,6 +4,7 @@
     python -m foreman.dev tool <name> --items <path> --params '<json>' [--threshold 0.7] [--fake] [--limit N]
     python -m foreman.dev run --items <path> --job "<plain English>" [--plan <plan.json>] [--save-plan <path>] [--threshold 0.7] [--fake]
     python -m foreman.dev catalog
+    python -m foreman.dev replay-export <run_id> --out web/public/replays/<name>/
 
 The fastest way to see a tool working end to end, offline with `--fake` or live.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import sys
@@ -438,6 +440,111 @@ async def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- replay-export
+
+REPLAY_FORMATS = ("xlsx", "pdf", "docx")
+
+
+def _replay_entry(name: str, out: Path, results: Any, files: dict[str, Any]) -> dict[str, Any]:
+    """One row of `index.json`: what the static site lists before loading a bundle."""
+    st = results.stats
+    jev, llm = st.by.get("jev", 0), st.by.get("llm", 0)
+    n_items = len(results.items) + len(results.dropped)
+    events = out / "events.jsonl"
+    if events.exists():  # the plan event knows the true input count (after MAX_ITEMS)
+        first = json.loads(events.read_text(encoding="utf-8").splitlines()[0])
+        if first.get("event") == "plan":
+            n_items = first["data"].get("items_total", n_items)
+    return {
+        "name": name,
+        "run_id": results.run_id,
+        "job": results.job,
+        "items": n_items,
+        "duration_s": round(st.wall_time_s, 1),
+        "cost_usd": round(st.jev_cost_usd + st.llm_cost_usd, 6),
+        "jev_cost_usd": round(st.jev_cost_usd, 6),
+        "llm_cost_usd": round(st.llm_cost_usd, 6),
+        "decisions": {"total": st.decisions_total, **st.by},
+        "jev_share": round(jev / st.decisions_total, 4) if st.decisions_total else 0.0,
+        "jev_share_of_model": round(jev / (jev + llm), 4) if jev + llm else 0.0,
+        "threshold": results.threshold,
+        "finished_at": results.finished_at,
+        "files": files,
+    }
+
+
+async def _write_exports(results: Any, out: Path) -> dict[str, str]:
+    """Minh's exports, when `foreman.format.export` exists; skips formats that fail."""
+    from foreman.api.extract import load_optional
+
+    export = load_optional("foreman.format", "export")
+    if export is None:
+        console.print("[yellow]foreman.format.export not built yet; no export files[/yellow]")
+        return {}
+    written: dict[str, str] = {}
+    for fmt in REPLAY_FORMATS:
+        try:
+            data = export(results, fmt, summary=results.aggregates.get("summary"))
+            if inspect.isawaitable(data):
+                data = await data
+        except Exception as e:  # noqa: BLE001 - one missing format must not stop the bundle
+            console.print(f"[yellow]{fmt} export skipped:[/yellow] {type(e).__name__}: {e}")
+            continue
+        if data:
+            (out / f"export.{fmt}").write_bytes(bytes(data))
+            written[fmt] = f"export.{fmt}"
+    return written
+
+
+async def cmd_replay_export(args: argparse.Namespace) -> int:
+    """Copy a finished run into a static replay bundle and list it in index.json."""
+    import shutil
+
+    from foreman.contracts import ResultsFile
+    from foreman.graph.executor import run_dir
+
+    src = run_dir(args.run_id)
+    results_path = src / "results.json"
+    if not results_path.exists():
+        console.print(f"[red]{results_path} not found; is the run finished?[/red]")
+        return 2
+    out = Path(args.out)
+    name = args.name or out.name
+    out.mkdir(parents=True, exist_ok=True)
+    results = ResultsFile.model_validate_json(results_path.read_text(encoding="utf-8"))
+
+    files: dict[str, Any] = {}
+    for fname, key in (
+        ("events.jsonl", "events"),
+        ("results.json", "results"),
+        ("decisions.jsonl", "decisions"),
+    ):
+        if (src / fname).exists():
+            shutil.copy2(src / fname, out / fname)
+            files[key] = fname
+        else:
+            console.print(f"[yellow]{src / fname} missing (CLI runs record no events)[/yellow]")
+    inputs = sorted((src / "input").glob("*")) if (src / "input").is_dir() else []
+    if inputs:
+        (out / "input").mkdir(exist_ok=True)
+        shutil.copy2(inputs[0], out / "input" / inputs[0].name)
+        files["input"] = f"input/{inputs[0].name}"
+    files["exports"] = await _write_exports(results, out)
+
+    entry = _replay_entry(name, out, results, files)
+    index_path = out.parent / "index.json"
+    index: dict[str, Any] = {"version": 1, "replays": []}
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["replays"] = [r for r in index.get("replays", []) if r.get("name") != name] + [entry]
+    index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+
+    size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
+    console.print(f"wrote {out} ({size / 1e6:.1f} MB) and {index_path}")
+    console.print_json(json.dumps({k: v for k, v in entry.items() if k != "files"}))
+    return 0
+
+
 # --------------------------------------------------------------------------- catalog
 
 
@@ -490,6 +597,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(fn=cmd_run)
 
     sub.add_parser("catalog", help="print the tool catalog").set_defaults(fn=cmd_catalog)
+
+    x = sub.add_parser("replay-export", help="copy a finished run into a static replay bundle")
+    x.add_argument("run_id")
+    x.add_argument("--out", required=True, help="bundle dir, e.g. web/public/replays/<name>/")
+    x.add_argument("--name", default=None, help="replay name (default: the --out dir name)")
+    x.set_defaults(fn=cmd_replay_export)
     return p
 
 
