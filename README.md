@@ -54,13 +54,36 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and [`doc
 
 ## Run it
 
+You need Python 3.12 and Node 20+.
+
+**1. Setup**
+
 ```bash
+git clone https://github.com/CloudCuckooLander722/EvoHacks-Submission-2026-Foreman.git foreman && cd foreman
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env        # then add your keys
-pytest -q                   # offline tests
-python -m foreman.dev ping  # checks the API keys
+(cd web && npm install)
+pytest -q                   # offline tests, no keys needed
 ```
+
+**2. Keys in `.env`** (only for live runs)
+
+```bash
+cp .env.example .env
+# AI_GATEWAY_API_KEY=...   Jev, through Vercel AI Gateway
+# FIREWORKS_API_KEY=...    the fallback LLM (DeepSeek V4 Flash on Fireworks)
+python -m foreman.dev ping  # checks both keys
+```
+
+**3. Start the demo**
+
+```bash
+scripts/demo.sh             # API on :8000 + site on :5173; open http://localhost:5173
+```
+
+**4. Try it.** In "Try it", drop in [`data/hero/demo_300.csv`](data/hero/demo_300.csv) (300 real Medium app reviews; the page also links it), keep the job *"Turn these app reviews into a ranked bug backlog"* and the saved plan `reviews_backlog`, and press **Run**. You see the plan, each step running then done, the live Jev / LLM / code meter with cost and time, then the ranked bug backlog ("reported by N"), type and theme counts, the confidence-bar slider and an Excel export. Click a backlog row for the "why" panel. A 300-row run takes about a minute.
+
+**No keys? Replay mode.** Press **Replay a recorded run**: it plays a real recorded 1,000-review run (`web/public/replays/reviews-1k/`) through the same UI, with no API and no keys. If the API isn't running, the page says so and replay still works. To build a static, replay-only site: `cd web && VITE_USE_MOCKS=true npm run build` (output in `web/dist/`).
 
 ### Hero data
 
