@@ -1,5 +1,7 @@
 """LLM client: JSON parsing, JSON-mode negotiation, fallback validation."""
 
+import asyncio
+import time
 from types import SimpleNamespace
 
 import httpx2
@@ -8,16 +10,20 @@ import pytest
 from pydantic import SecretStr
 
 from foreman.config import Settings, get_settings
+from foreman.core.decide import Decider
+from foreman.core.ledger import Ledger
 from foreman.core.llm import (
     DECIDE_SYSTEM,
     SCORE_GUIDE,
     LLMClient,
     LLMError,
+    LLMTimeout,
     _decide_prompt,
     parse_json_object,
     track_usage,
 )
 from foreman.core.questions import Choice, Noul, Score
+from foreman.testing.fakes import FakeAnswer, FakeJev
 
 
 def _resp(content: str | None, pt: int = 100, ct: int = 10):
@@ -35,6 +41,14 @@ def _bad_request() -> openai.BadRequestError:
     return openai.BadRequestError("response_format unsupported", response=resp, body=None)
 
 
+class Slow:
+    """A queued output that only arrives after `seconds` (a stalled provider)."""
+
+    def __init__(self, seconds: float, content: str) -> None:
+        self.seconds = seconds
+        self.content = content
+
+
 class FakeSDK:
     """Stands in for `openai.AsyncOpenAI`; replays queued responses or exceptions."""
 
@@ -47,6 +61,9 @@ class FakeSDK:
     async def _create(self, **kwargs):
         self.requests.append(kwargs)
         out = self.outputs.pop(0)
+        if isinstance(out, Slow):
+            await asyncio.sleep(out.seconds)
+            out = out.content
         if isinstance(out, Exception):
             raise out
         return _resp(out)
@@ -55,12 +72,13 @@ class FakeSDK:
         self.closed = True
 
 
-def _client(*outputs) -> tuple[LLMClient, FakeSDK]:
+def _client(*outputs, **settings) -> tuple[LLMClient, FakeSDK]:
     s = Settings(
         _env_file=None,
         fireworks_api_key=SecretStr("k"),
         llm_price_per_m_input=1.0,
         llm_price_per_m_output=2.0,
+        **settings,
     )
     sdk = FakeSDK(*outputs)
     return LLMClient(s, client=sdk), sdk
@@ -130,7 +148,7 @@ async def test_json_and_decide_get_their_own_limits() -> None:
     await llm.decide("state", "q", Choice("Type?", {"bug": None, "other": None}))
     j, d = sdk.requests
     assert (j["timeout"], j["max_tokens"]) == (90, 4096)
-    assert (d["timeout"], d["max_tokens"]) == (30, 256)
+    assert (d["timeout"], d["max_tokens"]) == (8, 256)
     assert j["reasoning_effort"] == d["reasoning_effort"] == "none"
 
 
@@ -149,6 +167,42 @@ async def test_timeout_retried_once() -> None:
     with pytest.raises(LLMError, match="LLM call failed"):
         await llm.json("s", "u")
     assert len(sdk.requests) == 2
+
+
+async def test_decide_timeout_returns_none_without_retry() -> None:
+    q = Choice("Type?", {"bug": None, "other": None})
+    llm, sdk = _client(_timeout(), '{"choice": "bug"}')
+    assert await llm.decide("state", "q", q) is None
+    assert len(sdk.requests) == 1  # the SDK's own timeout: no retry
+
+    llm, sdk = _client(Slow(5, '{"choice": "bug"}'), llm_decide_timeout_s=0.05)
+    t0 = time.perf_counter()
+    assert await llm.decide("state", "q", q) is None
+    assert time.perf_counter() - t0 < 1  # wall-clock bound, not the provider's pace
+    assert len(sdk.requests) == 1
+
+
+async def test_json_wall_clock_timeout_retried_once() -> None:
+    llm, sdk = _client(Slow(5, '{"a": 0}'), '{"a": 1}', llm_json_timeout_s=0.05)
+    assert await llm.json("s", "u") == {"a": 1}
+    assert len(sdk.requests) == 2
+    llm, sdk = _client(Slow(5, "{}"), Slow(5, "{}"), llm_json_timeout_s=0.05)
+    with pytest.raises(LLMTimeout, match="timed out after 0.05s"):
+        await llm.json("s", "u")
+    assert len(sdk.requests) == 2
+
+
+async def test_decider_keeps_jev_answer_when_fallback_times_out() -> None:
+    llm, sdk = _client(Slow(5, '{"answer": true}'), llm_decide_timeout_s=0.05)
+    jev = FakeJev(lambda *_: FakeAnswer(0.6))  # confidence 0.2 -> fallback
+    ledger = Ledger("r")
+    decider = Decider(jev, llm, ledger, "r", threshold=0.7)
+    t0 = time.perf_counter()
+    answers = await decider.decide(item_id="i", tool="t", state="x", questions={"q": Noul("Bug?")})
+    assert time.perf_counter() - t0 < 1
+    a = answers["q"]
+    assert (a.decided_by, a.value, a.low_confidence) == ("jev", 0.6, True)
+    assert len(sdk.requests) == 1
 
 
 async def test_output_cut_at_max_tokens_is_an_error() -> None:

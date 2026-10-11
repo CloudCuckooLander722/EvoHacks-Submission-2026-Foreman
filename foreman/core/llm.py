@@ -40,6 +40,10 @@ class LLMUnavailable(LLMError):
     """The call itself failed (missing key, HTTP error). Retrying the same prompt won't help."""
 
 
+class LLMTimeout(LLMUnavailable):
+    """The call exceeded its wall-clock limit (`_Limits.timeout_s`)."""
+
+
 @dataclass
 class CallUsage:
     """Usage of the LLM within one `track_usage()` scope (one task's worth of calls)."""
@@ -251,6 +255,7 @@ class _Limits:
 
     timeout_s: float
     max_tokens: int
+    retry_on_timeout: bool = True
 
 
 def _transient(e: Exception) -> bool:
@@ -270,6 +275,12 @@ class LLMClient:
         self._client = client
         if client is None:
             import openai  # noqa: F401 - pay the slow import now, not inside the first call
+
+            if self.settings.fireworks_api_key is not None:
+                # Building the client and touching `.chat.completions` loads more SDK modules
+                # synchronously (seconds here). Inside the first call that would block the
+                # event loop, where decide()'s timeout cannot interrupt it.
+                _ = self._sdk().chat.completions
         self._sem = asyncio.Semaphore(self.settings.llm_max_concurrency)
         # None = untested, True = provider accepts response_format, False = it rejects it.
         self._json_mode: bool | None = None
@@ -334,19 +345,31 @@ class LLMClient:
             kwargs["reasoning_effort"] = self.settings.llm_reasoning_effort
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        import openai
+
         t0 = time.perf_counter()
-        resp = await self._sdk().chat.completions.create(**kwargs)
+        # The SDK timeout bounds each network phase, not the whole call; wait_for does.
+        try:
+            resp = await asyncio.wait_for(
+                self._sdk().chat.completions.create(**kwargs), limits.timeout_s
+            )
+        except (TimeoutError, openai.APITimeoutError) as e:
+            raise LLMTimeout(f"LLM call failed: timed out after {limits.timeout_s:g}s") from e
         self._record(resp, int((time.perf_counter() - t0) * 1000))
         return resp
 
     async def _create_retrying(
         self, messages: list[dict[str, str]], json_mode: bool, limits: _Limits
     ) -> Any:
-        """`_create`, retried once on a timeout or transient provider error."""
+        """`_create`, retried once on a transient provider error, and on a timeout if allowed."""
         import openai
 
         try:
             return await self._create(messages, json_mode, limits)
+        except LLMTimeout as e:
+            if not limits.retry_on_timeout:
+                raise
+            log.warning("%s; retrying once", e)
         except openai.OpenAIError as e:
             if not _transient(e):
                 raise
@@ -392,7 +415,7 @@ class LLMClient:
     @property
     def _decide_limits(self) -> _Limits:
         s = self.settings
-        return _Limits(s.llm_timeout_s, s.llm_decide_max_tokens)
+        return _Limits(s.llm_decide_timeout_s, s.llm_decide_max_tokens, retry_on_timeout=False)
 
     async def json(self, system: str, user: str) -> dict[str, Any]:
         """Ask for a JSON object; retry once if the output does not parse."""
@@ -410,7 +433,8 @@ class LLMClient:
         """Answer one question as the fallback. Returns None instead of raising.
 
         Bad output (unparseable, unknown key, out-of-range level) is retried once; after
-        that the Decider keeps Jev's answer and flags it low-confidence.
+        that the Decider keeps Jev's answer and flags it low-confidence. A timeout
+        (`LLM_DECIDE_TIMEOUT_S`) is not retried: a fallback is optional, a stalled run is not.
         """
         try:
             system, user = _decide_prompt(state, question)
@@ -421,6 +445,9 @@ class LLMClient:
             try:
                 text = await self._complete(system, user, self._decide_limits)
                 return _to_answer(question, parse_json_object(text))
+            except LLMTimeout as e:
+                log.warning("LLM fallback for %s gave up, keeping Jev's answer: %s", qid, e)
+                return None
             except LLMUnavailable as e:
                 log.warning("LLM fallback for %s unavailable: %s", qid, e)
                 return None

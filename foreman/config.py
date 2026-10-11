@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.fireworks.ai/inference/v1"
     llm_model: str = "accounts/fireworks/models/deepseek-v4-flash"
     llm_max_concurrency: int = 8
-    llm_timeout_s: float = 30  # decide() (fallback): short prompts, tiny answers
+    llm_timeout_s: float = 30  # SDK client default; the per-call limits below override it
+    # decide() is a fallback: past this it gives up without retrying and the Decider keeps
+    # Jev's answer (low_confidence), so one slow Fireworks call never stalls a run.
+    llm_decide_timeout_s: float = 8
     llm_json_timeout_s: float = 90  # json() (proposals, planner): longer outputs
     llm_decide_max_tokens: int = 256
     llm_json_max_tokens: int = 4096
