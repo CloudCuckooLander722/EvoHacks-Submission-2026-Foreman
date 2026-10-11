@@ -1,0 +1,117 @@
+{
+  "job": "Turn these reviews into a ranked bug backlog",
+  "nodes": [
+    {
+      "id": "n1",
+      "tool": "filter",
+      "why": "Drop spam and ads so later steps only judge real feedback.",
+      "params": {
+        "condition": "Is this text written by a user about the app?",
+        "true_means": "Any user feedback about the app: complaints, bug reports, praise, feature requests, questions",
+        "false_means": "Spam, advertisements, promotions, or text unrelated to the app",
+        "output_field": "is_feedback"
+      }
+    },
+    {
+      "id": "n2",
+      "tool": "classify",
+      "why": "Sort the feedback into bugs, feature requests, praise and billing.",
+      "params": {
+        "instructions": "Which category best describes the text?",
+        "options": {
+          "bug": "Reports something broken, crashing, failing, slow, or not working as expected",
+          "feature_request": "Asks for new functionality or an option the app does not have yet",
+          "praise": "Positive feedback with no complaint and no request",
+          "billing": "About charges, payments, refunds, or subscriptions"
+        },
+        "output_field": "type"
+      }
+    },
+    {
+      "id": "n3",
+      "tool": "group",
+      "why": "Find the themes among bugs and feature requests.",
+      "params": {
+        "n_themes": 8,
+        "focus": "the specific problem or request in the feedback",
+        "output_field": "theme",
+        "where": {"field": "type", "op": "in", "value": ["bug", "feature_request"]}
+      }
+    },
+    {
+      "id": "n4",
+      "tool": "dedupe",
+      "why": "Merge bug reports that describe the same problem.",
+      "params": {
+        "mode": "issues",
+        "block_by": "theme",
+        "output_field": "dup_group",
+        "where": {"field": "type", "op": "eq", "value": "bug"}
+      }
+    },
+    {
+      "id": "n5",
+      "tool": "score",
+      "why": "Rate each bug's severity and how often it happens.",
+      "params": {
+        "dimensions": [
+          {
+            "name": "severity",
+            "instructions": "How severe is the problem described in the text for the user?",
+            "weight": 2,
+            "levels": [
+              "No problem described",
+              "Minor annoyance, app still usable",
+              "A feature is broken or unusable",
+              "The app crashes, loses data, or charges money wrongly"
+            ]
+          },
+          {
+            "name": "frequency",
+            "instructions": "How often does the text say the problem happens?",
+            "weight": 1,
+            "levels": [
+              "Not stated in the text",
+              "Happened once",
+              "Happens sometimes",
+              "Happens every time or constantly"
+            ]
+          }
+        ],
+        "output_field": "urgency",
+        "where": {"field": "type", "op": "eq", "value": "bug"}
+      }
+    },
+    {
+      "id": "n6",
+      "tool": "rank",
+      "why": "Order the bugs by urgency to make the backlog.",
+      "params": {
+        "criterion": "urgency of fixing this issue for users",
+        "score_field": "urgency",
+        "top_k": 20,
+        "output_field": "rank",
+        "where": {"field": "type", "op": "eq", "value": "bug"}
+      }
+    },
+    {
+      "id": "n7",
+      "tool": "calculate",
+      "why": "Count items per type and theme and average the bug urgency for the report.",
+      "params": {
+        "operations": [
+          {"op": "group_count", "by": "type", "as": "type_counts"},
+          {"op": "group_count", "by": "theme", "as": "theme_counts"},
+          {"op": "count", "as": "n_items"},
+          {
+            "op": "mean",
+            "field": "urgency",
+            "as": "avg_urgency",
+            "ndigits": 1,
+            "where": {"field": "type", "op": "eq", "value": "bug"}
+          }
+        ]
+      }
+    }
+  ]
+}

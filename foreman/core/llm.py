@@ -429,6 +429,22 @@ class LLMClient:
                 log.warning("LLM JSON parse failed: %s", e)
         raise LLMError(f"LLM output did not parse twice: {last}")
 
+    async def warm(self) -> None:
+        """One tiny call so the first real fallback skips connection setup. Never raises.
+
+        Run it in the background at context creation: the first call pays for TLS, HTTP/2
+        and the provider's cold start, which would otherwise eat a fallback's short timeout.
+        Its cost is not charged to the run's ledger.
+        """
+        try:
+            await self._complete(
+                "Reply with only a JSON object.",
+                'Return exactly {"ok": true}.',
+                _Limits(self.settings.llm_json_timeout_s, 16, retry_on_timeout=False),
+            )
+        except Exception as e:  # noqa: BLE001 - warming is best-effort
+            log.info("LLM warm-up call failed (ignored): %s", e)
+
     async def decide(self, state: Any, qid: str, question: Question) -> Answer | None:
         """Answer one question as the fallback. Returns None instead of raising.
 
