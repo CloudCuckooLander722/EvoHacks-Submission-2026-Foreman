@@ -33,6 +33,7 @@
       "why": "Find the themes among bugs and feature requests.",
       "params": {
         "n_themes": 12,
+        "sample_size": 400,
         "focus": "the specific problem or request in the feedback",
         "outlier_min": 3,
         "output_field": "theme",

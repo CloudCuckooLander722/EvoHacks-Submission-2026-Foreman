@@ -3,29 +3,33 @@
   "replays": [
     {
       "name": "reviews-1k",
-      "run_id": "r_e79c8b43",
+      "run_id": "r_76889711",
       "job": "Turn these app reviews into a ranked bug backlog",
       "items": 1000,
-      "duration_s": 85.6,
-      "cost_usd": 0.094248,
-      "jev_cost_usd": 0.052395,
-      "llm_cost_usd": 0.041853,
+      "duration_s": 122.5,
+      "cost_usd": 0.09681,
+      "jev_cost_usd": 0.051992,
+      "llm_cost_usd": 0.044819,
       "decisions": {
-        "total": 2965,
-        "jev": 2353,
-        "llm": 607,
+        "total": 2927,
+        "jev": 2309,
+        "llm": 613,
         "code": 5
       },
-      "jev_share": 0.7936,
-      "jev_share_of_model": 0.7949,
+      "jev_share": 0.7889,
+      "jev_share_of_model": 0.7902,
       "threshold": 0.7,
-      "finished_at": "2026-10-11T07:22:43Z",
+      "finished_at": "2026-10-11T16:54:42Z",
       "files": {
         "events": "events.jsonl",
         "results": "results.json",
         "decisions": "decisions.jsonl",
         "input": "input/reviews_1k.json",
-        "exports": {}
+        "exports": {
+          "xlsx": "export.xlsx",
+          "pdf": "export.pdf",
+          "docx": "export.docx"
+        }
       }
     }
   ]
