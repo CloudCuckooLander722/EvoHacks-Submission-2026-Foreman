@@ -1,6 +1,14 @@
 # Live run results
 
-Real numbers from live runs on the hero dataset (Medium app reviews, see [`data/hero/README.md`](../data/hero/README.md)), recorded Sat Oct 10, 2026, 23:30–23:40 PDT. Use these on the site and in the video; don't round them up.
+Real numbers from live runs on the hero dataset (Medium app reviews, see [`data/hero/README.md`](../data/hero/README.md)), recorded Sat Oct 10, 2026, 23:30 PDT – Sun Oct 11, 00:06 PDT. Use these on the site and in the video; don't round them up.
+
+## Overnight summary (for Nathan and Minh)
+
+- **All of section 4 ran.** Three 1k runs (hand-written plan, planner, API) and the 10k hero run all finished with every node done and no failed or skipped nodes.
+- **Headline numbers for the site (10k run):** 10,000 reviews in 27.6 minutes for **$2.25**: 64,893 decisions, 72.6% made by Jev, 17,801 by the LLM. At 1k: about 2 minutes and **11 cents**, with 76–79% by Jev.
+- **What eats the time and money at 10k is dedupe:** 18.3 of the 27.6 minutes and 62% of all decisions. It hit its 20,000-pair cap (57,264 candidate pairs), and its clusters chain into whole-theme groups (see "Known quality issues"). Fixing dedupe is the biggest lever for both cost and the "reports" column.
+- **The replay bundle on the site is the API run (C, `reviews-1k`).** The 10k run went through the CLI, so it has no `events.jsonl` and no bundle. Its results.json (12 MB) and decisions (24 MB) are too big to ship to a static site anyway; use its numbers, not its files.
+- **Choices I made without asking:** I left the tools and the hero plan unchanged (they're outside this task's files) and wrote the issues down instead. No re-runs were done to improve the numbers.
 
 All runs: threshold 0.7, Jev via Vercel AI Gateway, LLM fallback DeepSeek V4 Flash on Fireworks ($0.22 / $0.66 per M tokens), plan `filter → classify → group → dedupe → score → rank → calculate`.
 
@@ -13,9 +21,11 @@ All runs: threshold 0.7, Jev via Vercel AI Gateway, LLM fallback DeepSeek V4 Fla
 | A. 1k, hand-written plan (CLI) | 1,000 | 112.8 s | 3,895 (3,074 / 816 / 5) | 79.0% | $0.0570 | $0.0575 | **$0.1144** |
 | B. 1k, planner (CLI) | 1,000 | 122.4 s | 3,507 (2,686 / 816 / 5) | 76.7% | $0.0549 | $0.0608 | **$0.1158** |
 | C. 1k, hand-written plan (API, replay `reviews-1k`) | 1,000 | 117.1 s | 3,349 (2,559 / 785 / 5) | 76.5% | $0.0512 | $0.0557 | **$0.1069** |
-| D. 10k, hand-written plan (CLI) | 10,000 | *running* | | | | | |
+| D. 10k, hand-written plan (CLI) | 10,000 | 1,655.2 s (27.6 min) | 64,893 (47,087 / 17,801 / 5) | 72.6% | $0.8331 | $1.4125 | **$2.2456** |
 
-Run B's time includes planning (one LLM call). For scale: 3,000–3,900 decisions for about 11 cents is roughly $0.03 per 1,000 decisions, and Jev's half of that is about $0.016.
+Run B's time includes planning (one LLM call). For scale: 3,000–3,900 decisions for about 11 cents is roughly $0.03 per 1,000 decisions, and Jev's half of that is about $0.016. At 10k it is $0.035 per 1,000 decisions; Jev's own decisions cost $0.018 per 1,000.
+
+10k vs 1k: 10× the items took 14.7× the time and 19.6× the cost, because dedupe compares pairs (its work grows faster than the item count) and sends 31% of its checks to the LLM. Every other step scaled about linearly.
 
 Where the LLM is used: the filter step sends about 29% of its decisions to the LLM (the "is this about the app?" question is often borderline on short reviews), and dedupe sends about 30% (pairwise "same problem?" checks). Classify (13%), score (12%) and rank (0%) mostly stay with Jev.
 
@@ -109,9 +119,38 @@ Themes: Feature Requests and Missing Functionality 79, App Performance and Stabi
 
 ## D. 10k reviews, hand-written plan, CLI
 
-Started Sat Oct 10, 23:38 PDT in the background (`runs/hero10k.log`). Numbers go here when it finishes.
+`r_97f665e2` · started Sat Oct 10 23:38 PDT, finished Sun Oct 11 00:06 PDT · log `runs/hero10k.log` · 10,000 in → 9,231 kept (769 dropped by the filter) · 52 low-confidence decisions (Jev unsure and the LLM fallback failed or timed out)
+
+| Node | Items | Jev | LLM | Code | Time |
+|---|---|---|---|---|---|
+| n1 filter | 10000 → 9231 | 6,937 | 3,063 | 0 | 271.7 s |
+| n2 classify | 9231 | 7,896 | 1,335 | 0 | 164.8 s |
+| n3 group | 2,596 bugs + requests | 3,145 | 699 | 0 | 77.9 s |
+| n4 dedupe | 1,775 bugs → 450 unique (57 clusters); 20,000 of 57,264 candidate pairs checked | 27,547 | 12,453 | 2 | 1,099.5 s |
+| n5 score | 1,775 bugs | 1,524 | 251 | 1 | 34.9 s |
+| n6 rank | 450 | 38 | 0 | 451 | 5.4 s |
+| n7 calculate | 9231 | 0 | 0 | 4 | 0.0 s |
+
+Top 5 ranked bugs. Read "reports" as "related reviews in the same theme" at this size, not exact duplicates (see "Known quality issues"):
+
+| # | Id | Urgency | Reports | Review |
+|---|---|---|---|---|
+| 1 | r-70 | 100.0 | 158 | "crashes upon opening and freezes device" |
+| 2 | r-3816 | 100.0 | 1 | "app is getting closed frequently. miui 10.3.13" |
+| 3 | r-3980 | 100.0 | 1 | "your auto refresh feature just erased my work in progress." |
+| 4 | r-8406 | 100.0 | 1 | "…i add new topic but i lost my old [topics]…" |
+| 5 | r-8491 | 100.0 | 1 | "…for the past year every time i edit an arti[cle]…" |
+
+The next five: r-8553 "deleted my drafts for no reason" (100.0), r-9293 (100.0), r-9562 (100.0, a crypto-exchange KYC complaint the filter should have dropped), r-8309 "last update causes constant crashes" (99.7), r-790 "losing credentials on upgrade" (100.0). Many bugs hit the top severity level, so the order among the 100.0s comes from Jev's tie-break comparisons (19 run, 15 swapped).
+
+Types: praise 4,017, bug 1,775, other 1,370, billing 1,248, feature_request 821. Average bug urgency 63.5.
+
+Themes (bugs and feature requests, 2,596 items): none_of_these 1,061, Writing and publishing problems 371, Sign-up and login issues 351, Navigation and UI issues 245, App crashes and freezes 177, Offline reading and saving 136, Article access limits 106, Premium-only recommendations 50, Image loading and display 35, Missing reading history 31, Text-to-speech and language 20, Data and battery usage 13.
 
 ## Known quality issues
 
+- **Dedupe chains whole themes together at 10k.** Dedupe runs within each theme (`block_by: theme`), and its clusters merge transitively (A≈B and B≈C put A, B and C in one group). At 10k the four largest clusters have 439, 321, 202 and 158 members, each one a whole theme block (the 439 is every unthemed bug). So r-70's "158 reports" means 158 crash/freeze reviews, not 158 copies of one report, and "1,775 bugs → 450 unique" overstates the merging. It also hit `max_pairs` (20,000 of 57,264 pairs checked) and took 66% of the run time. Possible fixes in `foreman/tools/dedupe.py`: link only to the cluster's canonical item instead of transitively, or require a minimum similarity before a pair counts as linked. At 1k the effect is small (largest cluster 24, in run C).
+- **Too many bugs get no theme at 10k.** 1,061 of 2,596 bugs and feature requests (41%) are `none_of_these`, against 6–27% in the 1k runs. The 8+3 themes, proposed from a sample, don't cover 10k reviews. Raising `n_themes` in the plan (e.g. 12–15) would help.
 - **Filter drops real reviews.** 77–103 of 1,000 genuine reviews are dropped as "not about the app". Most are short praise of Medium's *articles* ("great articles on machine learning and python."), which the filter's wording ("written by a user about the app") reads literally; a few are real complaints ("arab countries out of illegible country list"). The bug backlog barely changes, but the type counts undercount praise. Fix in the plan: make `true_means` include "comments about the articles or content on the app".
+- **Filter lets some off-topic reviews through.** At 10k, rank 8 is a crypto-exchange KYC complaint (r-9562) that has nothing to do with Medium.
 - **Theme runs differ.** Group proposes its themes from a sample with the LLM, so theme names and counts change between runs (runs A and C used the same plan). Compare runs by type counts and the ranked list, not theme names.
