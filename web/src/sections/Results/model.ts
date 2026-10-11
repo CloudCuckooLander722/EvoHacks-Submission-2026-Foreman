@@ -42,7 +42,7 @@ export function barsOf(value: unknown): Bar[] | null {
     if (!rows.every((r) => r && typeof r === 'object' && !Array.isArray(r))) return null
     const label = LABEL_KEYS.find((k) => typeof rows[0][k] === 'string')
     if (!label || !rows.every((r) => typeof r[label] === 'string' && isNum(r.count))) return null
-    return rows.map((r) => ({ label: r[label] as string, value: r.count as number }))
+    return rows.map((r) => ({ label: prettyLabel(r[label] as string), value: r.count as number }))
   }
   return null
 }
@@ -79,7 +79,9 @@ export const isMetaField = (name: string) => name.includes('__')
 export function columnsOf(items: ItemState[]): string[] {
   const seen = new Set<string>()
   for (const item of items) for (const k of Object.keys(item.fields)) if (!isMetaField(k)) seen.add(k)
-  return [...seen]
+  // The source text column is already shown as the item's text.
+  const first = items[0]
+  return [...seen].filter((k) => !first || first.fields[k] !== first.text)
 }
 
 /** Fields some tool decided: they carry a `__by` companion. */

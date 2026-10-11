@@ -35,7 +35,7 @@ export function Hero() {
     <header className="hero">
       <motion.p className="eyebrow" {...rise(0)}>Foreman · AI for tedious bulk work</motion.p>
       <motion.h1 {...rise(0.05)}>
-        Tedious bulk work, done in seconds, with a confidence score on every decision.
+        Tedious bulk work, done fast and cheap, with a confidence score on every decision.
       </motion.h1>
       <motion.p className="lede" {...rise(0.12)}>
         Describe the job in plain English. A light LLM plans it once, a fast calibrated model decides every
