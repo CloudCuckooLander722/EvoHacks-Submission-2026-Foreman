@@ -18,6 +18,7 @@ from foreman.core.llm import (
     LLMClient,
     LLMError,
     LLMTimeout,
+    LLMUnavailable,
     _decide_prompt,
     parse_json_object,
     track_usage,
@@ -334,3 +335,19 @@ async def test_live_json() -> None:
     async with LLMClient() as llm:
         out = await llm.json("Reply with only JSON.", 'Return {"ok": true}.')
     assert out.get("ok") is True
+
+
+async def test_chat_returns_plain_text_without_json_mode() -> None:
+    llm, sdk = _client("Hello there!")
+    messages = [{"role": "system", "content": "Be nice."}, {"role": "user", "content": "Hi"}]
+    assert await llm.chat(messages) == "Hello there!"
+    req = sdk.requests[0]
+    assert req["messages"] == messages
+    assert "response_format" not in req
+    assert llm.calls == 1
+
+
+async def test_chat_wraps_provider_errors() -> None:
+    llm, _ = _client(_bad_request())
+    with pytest.raises(LLMUnavailable, match=r"\[400\]"):
+        await llm.chat([{"role": "user", "content": "Hi"}])
