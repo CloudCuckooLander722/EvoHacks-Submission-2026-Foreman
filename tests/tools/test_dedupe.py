@@ -239,3 +239,113 @@ def test_sample_file_shape() -> None:
     data = json.loads(SAMPLE.read_text())
     assert 15 <= len(data["items"]) <= 25
     assert all({"vendor", "address"} <= set(i["fields"]) for i in data["items"])
+
+
+# --------------------------------------------------------------------------- issues mode
+
+REPORTS = {
+    "cam1": ("App crashes when I open the camera on my Pixel 8.", "camera"),
+    "cam2": ("Camera crashes the whole app on Pixel 8 since the update.", "camera"),
+    "freeze": ("App freezes on the loading screen on iPhone 13.", "stability"),
+    "love1": ("Love this app, the new editor is fast.", "praise"),
+    "love2": ("Love this app, the filters look great.", "praise"),
+}
+
+
+def _reports(themes: bool = True) -> RunState:
+    items = [
+        ItemState(id=k, text=t, fields={"theme": th} if themes else {})
+        for k, (t, th) in REPORTS.items()
+    ]
+    return RunState(run_id="r", job="j", items=items)
+
+
+def _issue_rule(levels: dict[frozenset[str], float], problem: dict[str, float] | None = None):
+    """Same-problem level per pair of report ids; is_problem P(yes) per text_a id."""
+    by_text = {t: k for k, (t, _) in REPORTS.items()}
+    problem = problem or {}
+
+    def rule(state, qid, q):
+        a, b = (by_text[state[k].split(" | ")[0]] for k in ("text_a", "text_b"))
+        if qid == "same":
+            return FakeAnswer(levels.get(frozenset((a, b)), 0.0), confidence=0.9)
+        return FakeAnswer(problem.get(a, 0.95))
+
+    return rule
+
+
+async def _issues(run: RunState, rule, **params):
+    jev = FakeJev(rule)
+    ctx = await make_context(threshold=0.7, jev=jev, llm=FakeLLM())
+    report = await DedupeTool().run(run, DedupeParams(mode="issues", **params), ctx)
+    return report, jev
+
+
+async def test_issues_mode_questions_and_state() -> None:
+    run = _reports()
+    _, jev = await _issues(run, _issue_rule({}), min_similarity=0, compare_fields=["text", "theme"])
+    state, qs = jev.calls[0]
+    assert set(state) == {"text_a", "text_b"}
+    assert set(qs) == {"same", "is_problem"}  # no conflict checks in issues mode
+    assert qs["same"].instructions == dd.ISSUE_INSTRUCTIONS
+    assert qs["same"].levels[0] == "Different features or different problems"
+    assert qs["same"].levels[-1] == "Clearly the same problem" and len(qs["same"].levels) == 4
+    assert isinstance(qs["is_problem"], Noul)
+    assert qs["is_problem"].instructions == "Does text_a report a problem with the app?"
+    assert " | " in state["text_a"]  # text and theme joined
+
+
+async def test_issues_match_only_top_two_levels() -> None:
+    levels = {frozenset(("cam1", "cam2")): 2.0, frozenset(("cam1", "freeze")): 1.9}
+    run = _reports()
+    report, _ = await _issues(run, _issue_rule(levels), min_similarity=0)
+    f = {i.id: i.fields for i in run.items}
+    assert f["cam1"]["dup_group"] == f["cam2"]["dup_group"] == "dup-1"
+    assert f["freeze"]["dup_group"] is None
+    assert f["cam1"]["dup_group__confidence"] == pytest.approx(0.9)  # min(same, is_problem)
+    assert report.items_out == 4
+
+
+async def test_issues_praise_never_merges() -> None:
+    levels = {frozenset(("love1", "love2")): 3.0, frozenset(("cam1", "cam2")): 3.0}
+    run = _reports()
+    await _issues(run, _issue_rule(levels, problem={"love1": 0.1, "love2": 0.1}), min_similarity=0)
+    f = {i.id: i.fields for i in run.items}
+    assert f["love1"]["dup_group"] is None and f["love2"]["dup_group"] is None
+    assert f["cam1"]["dup_group"] == "dup-1"
+
+
+def test_issues_min_similarity_default() -> None:
+    assert DedupeParams().min_similarity == 55
+    assert DedupeParams(mode="issues").min_similarity == 50
+    assert DedupeParams(mode="issues", min_similarity=70).min_similarity == 70
+    assert DedupeParams(mode="issues", min_similarity=55).min_similarity == 55
+    assert DedupeParams.model_validate_json('{"mode": "issues"}').min_similarity == 50
+
+
+async def test_block_by_compares_within_groups_only() -> None:
+    run = _reports()
+    run.items[2].fields.pop("theme")  # freeze has no theme: never compared
+    report, jev = await _issues(run, _issue_rule({}), min_similarity=0, block_by="theme")
+    compared = {frozenset((s["text_a"], s["text_b"])) for s, _ in jev.calls}
+    text = {k: t for k, (t, _) in REPORTS.items()}
+    assert compared == {
+        frozenset((text["cam1"], text["cam2"])),
+        frozenset((text["love1"], text["love2"])),
+    }
+    assert any("1 items have no `theme` value" in n for n in report.notes)
+    assert run.items[2].fields["dup_group"] is None
+
+
+async def test_block_by_in_records_mode() -> None:
+    run = _run()
+    for item in run.items:
+        item.fields["city"] = "SJ" if item.id in "ac" else "SF"
+    _, jev, _ = await _dedupe(run, _vendor_rule({}), block_by="city", min_similarity=0)
+    pairs = {frozenset(s[r]["vendor"] for r in ("record_a", "record_b")) for s, _ in jev.calls}
+    assert len(pairs) == 1 + 10  # a-c, plus all 5 SF records pairwise
+
+
+def test_description_mentions_issues_and_block_by() -> None:
+    desc = DedupeTool.description
+    assert '"issues"' in desc and "always set `block_by`" in desc
