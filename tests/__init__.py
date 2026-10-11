@@ -1,0 +1,1 @@
+"""Foreman test suite."""
