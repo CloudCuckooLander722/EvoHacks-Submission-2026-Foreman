@@ -12,9 +12,12 @@ This is a hackathon build: EvoHacks, theme "AI for Automation". Submission deadl
 
 | Area | Owner | Where |
 |---|---|---|
-| File extraction (csv/xlsx/pdf/docx → items) | Minh | `foreman/extract_files/` |
-| Planner, tools, node state, executor, integration, frontend | Nathan | `foreman/core/`, `foreman/tools/`, `foreman/graph/`, `foreman/api/`, `web/` |
+| File extraction (csv/xlsx/pdf/docx/txt/json → items) | Minh | `foreman/extract_files/` |
+| Planner, tools, node state, executor, API, integration | Nathan | `foreman/core/`, `foreman/tools/`, `foreman/graph/`, `foreman/api/` |
 | Formatting results into reports, charts and exports | Minh | `foreman/format/` |
+| Frontend (the demo site) | Minh | `web/` |
+
+Minh's current plan and the API contract the frontend builds against are in `docs/MINH_PLAN.md`.
 
 Do not edit another owner's folder unless the task says so. The two hand-off formats (`items.json` in, `results.json` out) are defined in `docs/CONTRACTS.md` and implemented in `foreman/contracts.py`. Changing them needs both people to agree.
 
