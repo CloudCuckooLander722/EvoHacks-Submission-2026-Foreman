@@ -1,25 +1,30 @@
 import { useRef, useState, type DragEvent, type FormEvent } from 'react'
-import { USE_MOCKS } from '../../config'
+export const DEMO_JOB = 'Turn these app reviews into a ranked bug backlog'
 
-export const DEMO_JOB =
-  'Turn these reviews into a backlog: drop spam, split bugs from feature requests, ' +
-  'group into themes, merge duplicates, rank by urgency.'
+/** Saved plans in data/plans/; '' lets the LLM planner write a plan from the job text. */
+const PLANS = [
+  { value: 'reviews_backlog', label: 'Saved plan: reviews_backlog (fast, tuned)' },
+  { value: '', label: 'Let the LLM plan it from the job text' },
+]
 
 interface Props {
   busy: boolean
-  onSubmit: (file: File | null, job: string, threshold: number) => void
+  /** null while /health is being checked. */
+  apiOk: boolean | null
+  onSubmit: (file: File | null, job: string, threshold: number, plan: string) => void
+  onReplay: (threshold: number) => void
 }
 
 /** The job textarea, a drag-and-drop file target and the confidence bar (MINH_PLAN §C1). */
-export function JobComposer({ busy, onSubmit }: Props) {
+export function JobComposer({ busy, apiOk, onSubmit, onReplay }: Props) {
   const [job, setJob] = useState(DEMO_JOB)
   const [file, setFile] = useState<File | null>(null)
   const [threshold, setThreshold] = useState(0.7)
+  const [plan, setPlan] = useState(PLANS[0].value)
   const [dragging, setDragging] = useState(false)
   const input = useRef<HTMLInputElement>(null)
 
-  const needsFile = !USE_MOCKS && !file
-  const canSubmit = !busy && job.trim().length > 0 && !needsFile
+  const canSubmit = !busy && apiOk === true && job.trim().length > 0 && !!file
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault()
@@ -30,7 +35,7 @@ export function JobComposer({ busy, onSubmit }: Props) {
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    if (canSubmit) onSubmit(file, job.trim(), threshold)
+    if (canSubmit) onSubmit(file, job.trim(), threshold, plan)
   }
 
   return (
@@ -64,9 +69,17 @@ export function JobComposer({ busy, onSubmit }: Props) {
           <span>Drop a csv, xlsx, json, txt, pdf or docx file here, or click to choose</span>
         )}
       </div>
-      {USE_MOCKS && (
-        <p className="hint">Mock mode: runs replay a recorded run; the file is not uploaded.</p>
-      )}
+      <p className="hint">
+        Try <a href={`${import.meta.env.BASE_URL}samples/demo_300.csv`} download onClick={(e) => e.stopPropagation()}>demo_300.csv</a>{' '}
+        (300 real Medium app reviews) or any csv / items.json.
+      </p>
+
+      <label className="field-label" htmlFor="plan">Plan</label>
+      <select id="plan" value={plan} onChange={(e) => setPlan(e.target.value)} disabled={busy}>
+        {PLANS.map((p) => (
+          <option key={p.value} value={p.value}>{p.label}</option>
+        ))}
+      </select>
 
       <div className="slider-row">
         <label className="field-label" htmlFor="threshold">Confidence bar</label>
@@ -84,9 +97,20 @@ export function JobComposer({ busy, onSubmit }: Props) {
       </div>
       <p className="hint">Jev answers below this confidence get a second opinion from the LLM.</p>
 
-      <button className="primary" type="submit" disabled={!canSubmit}>
-        {busy ? 'Running…' : 'Run'}
-      </button>
+      {apiOk === false && (
+        <p className="card error" role="alert">
+          The Foreman API isn't reachable on localhost:8000, so live runs are off. Start it with{' '}
+          <code>scripts/demo.sh</code>, or replay a recorded run below (no keys needed).
+        </p>
+      )}
+      <div className="hero-actions">
+        <button className="primary" type="submit" disabled={!canSubmit}>
+          {busy ? 'Running…' : apiOk === null ? 'Checking API…' : 'Run'}
+        </button>
+        <button className="ghost" type="button" disabled={busy} onClick={() => onReplay(threshold)}>
+          Replay a recorded run
+        </button>
+      </div>
     </form>
   )
 }

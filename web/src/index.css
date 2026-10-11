@@ -261,3 +261,26 @@ button.cell:hover { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent)
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* Final pass: replay button, plan select, ranked backlog */
+button.ghost {
+  font: inherit; font-weight: 600; font-size: 17px; padding: 12px 22px; border-radius: 980px; cursor: pointer;
+  background: transparent; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+button.ghost:disabled { opacity: 0.45; cursor: default; }
+select { font: inherit; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: inherit; margin-bottom: 12px; }
+.backlog { margin: 24px 0; }
+.backlog-title { font-size: 21px; margin: 0 0 12px; }
+.backlog-title .muted { font-size: 15px; font-weight: 400; }
+.backlog-list { list-style: none; margin: 0; padding: 0; }
+.backlog-list li + li { border-top: 1px solid var(--line); }
+.backlog-row {
+  all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: grid; grid-template-columns: 36px 1fr auto;
+  gap: 16px; align-items: center; padding: 12px 4px;
+}
+.backlog-row:hover { background: var(--jev-bg); }
+.backlog-rank { font-weight: 700; color: var(--accent); text-align: right; }
+.backlog-text { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.backlog-meta { display: flex; gap: 8px; align-items: center; white-space: nowrap; font-size: 13px; }
+.pill { padding: 3px 10px; border-radius: 980px; background: var(--bg); border: 1px solid var(--line); }
+.pill.strong { background: var(--jev-bg); border-color: transparent; color: var(--accent); font-weight: 600; }

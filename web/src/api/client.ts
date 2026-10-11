@@ -1,6 +1,9 @@
 import { API_BASE } from '../config'
 import type { Decision, ExportFormat, ForemanApi, ResultsFile, RunEvent } from './types'
 
+export const API_DOWN =
+  "Can't reach the Foreman API on localhost:8000. Start it with scripts/demo.sh, or press “Replay a recorded run”."
+
 const EVENT_NAMES = ['plan', 'node', 'decision', 'stats', 'done'] as const
 
 async function getJson<T>(path: string): Promise<T> {
@@ -11,13 +14,20 @@ async function getJson<T>(path: string): Promise<T> {
 
 /** The real backend: Nathan's FastAPI app, per MINH_PLAN §D. */
 export const realApi: ForemanApi = {
-  async startRun(file, job, threshold) {
+  async startRun(file, job, threshold, plan) {
     if (!file) throw new Error('Choose a file to run on.')
     const body = new FormData()
     body.append('file', file)
     body.append('job', job)
     body.append('threshold', String(threshold))
-    const res = await fetch(`${API_BASE}/runs`, { method: 'POST', body })
+    if (plan) body.append('plan', plan)
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}/runs`, { method: 'POST', body })
+    } catch {
+      throw new Error(API_DOWN)
+    }
+    if (res.status >= 502 && res.status <= 504) throw new Error(API_DOWN)
     if (!res.ok) throw new Error(`Could not start the run: ${res.status} ${await res.text()}`)
     const { run_id } = (await res.json()) as { run_id: string }
     return run_id

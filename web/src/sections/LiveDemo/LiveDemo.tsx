@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { api } from '../../api'
+import { api, checkApi, setMode, type Mode } from '../../api'
+import { API_DOWN } from '../../api/client'
 import type { ResultsFile } from '../../api/types'
 import { Results } from '../Results/Results'
 import { initialRun, runReducer } from '../../state/run'
@@ -21,7 +22,13 @@ export function LiveDemo() {
   const [results, setResults] = useState<ResultsFile | null>(null)
   const [resultsError, setResultsError] = useState<string | null>(null)
 
+  const [apiOk, setApiOk] = useState<boolean | null>(null)
+  const [mode, setModeState] = useState<Mode>('live')
+
   useEffect(() => () => unsubscribe.current?.(), [])
+  useEffect(() => {
+    void checkApi().then((h) => setApiOk(h.ok))
+  }, [])
 
   // The run is done: fetch results.json for the results view.
   useEffect(() => {
@@ -36,19 +43,30 @@ export function LiveDemo() {
     }
   }, [run.status, run.runId])
 
-  const start = async (file: File | null, job: string, threshold: number) => {
+  const begin = async (m: Mode, file: File | null, job: string, threshold: number, plan?: string) => {
     unsubscribe.current?.()
+    setMode(m)
+    setModeState(m)
     setResults(null)
     setResultsError(null)
     dispatch({ type: 'start' })
     try {
-      const runId = await api.startRun(file, job, threshold)
+      const runId = await api.startRun(file, job, threshold, plan)
       dispatch({ type: 'started', runId })
       unsubscribe.current = api.subscribe(runId, (event) => dispatch({ type: 'event', event }))
     } catch (e) {
-      dispatch({ type: 'failed', message: e instanceof Error ? e.message : String(e) })
+      let message = e instanceof Error ? e.message : String(e)
+      if (m === 'live' && !(await checkApi()).ok) {
+        setApiOk(false)
+        message = API_DOWN
+      }
+      dispatch({ type: 'failed', message })
     }
   }
+  const start = (file: File | null, job: string, threshold: number, plan: string) =>
+    begin('live', file, job, threshold, plan || undefined)
+  const replay = (threshold: number) =>
+    begin('replay', null, 'Turn these app reviews into a ranked bug backlog', threshold)
 
   const busy = run.status === 'starting' || run.status === 'running'
 
@@ -58,7 +76,10 @@ export function LiveDemo() {
       <h2 className="section-title">Try it</h2>
       <div className="demo-grid">
         <div className="demo-left">
-          <JobComposer busy={busy} onSubmit={start} />
+          <JobComposer busy={busy} apiOk={apiOk} onSubmit={start} onReplay={replay} />
+          {mode === 'replay' && run.status !== 'idle' && (
+            <p className="hint">Replaying the recorded 1,000-review run (sped up; no API or keys used).</p>
+          )}
           {run.errors.map((e, i) => (
             <p key={i} className={`card error${e.fatal ? ' fatal' : ''}`} role="alert">
               {e.node && <strong>{e.node}: </strong>}

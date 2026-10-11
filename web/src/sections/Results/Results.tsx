@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { ResultsFile } from '../../api/types'
+import { Backlog } from './Backlog'
 import { Charts } from './Charts'
 import { ConfidenceCurve } from './ConfidenceCurve'
 import { Downloads } from './Downloads'
@@ -22,6 +23,7 @@ export function Results({ results }: { results: ResultsFile }) {
     <section id="results" className="section results">
       <h2 className="section-title">Results</h2>
       <Summary results={results} />
+      <Backlog results={results} onSelect={setSelected} />
       {curve && curve.length > 0 && (
         <ConfidenceCurve curve={curve} stats={results.stats} runThreshold={results.threshold} />
       )}

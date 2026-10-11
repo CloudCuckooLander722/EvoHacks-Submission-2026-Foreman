@@ -158,8 +158,8 @@ export type ExportFormat = 'xlsx' | 'pdf' | 'docx'
 
 /** What the UI needs from a backend; the real client and the mock both implement it. */
 export interface ForemanApi {
-  /** POST /runs. Resolves to the new run_id. */
-  startRun(file: File | null, job: string, threshold: number): Promise<string>
+  /** POST /runs. Resolves to the new run_id. `plan` names a saved plan in data/plans/. */
+  startRun(file: File | null, job: string, threshold: number, plan?: string): Promise<string>
   /** GET /runs/{id}/events. Returns an unsubscribe function. */
   subscribe(runId: string, onEvent: (e: RunEvent) => void): () => void
   getResults(runId: string): Promise<ResultsFile>

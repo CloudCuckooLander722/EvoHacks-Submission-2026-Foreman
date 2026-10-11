@@ -1,22 +1,33 @@
+import { useEffect, useState } from 'react'
 import { api } from '../../api'
-import type { ExportFormat } from '../../api/types'
 
-const FORMATS: { format: ExportFormat; label: string; note: string }[] = [
-  { format: 'xlsx', label: 'Excel', note: 'every row, coloured by who decided' },
-  { format: 'pdf', label: 'PDF', note: 'summary, charts, top 50 rows' },
-  { format: 'docx', label: 'Word', note: 'summary, charts, tables' },
-]
-
-/** GET /runs/{id}/export?format=… (in mock mode, the recorded run's exports in public/samples/). */
+/**
+ * GET /runs/{id}/export?format=xlsx (in replay mode, the recorded run's export).
+ * The button stays hidden until the export answers, and for good if it says 501 (not built).
+ */
 export function Downloads({ runId }: { runId: string }) {
+  const url = api.exportUrl(runId, 'xlsx')
+  const [ok, setOk] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    setOk(false)
+    fetch(url).then(
+      (res) => live && setOk(res.ok),
+      () => live && setOk(false),
+    )
+    return () => {
+      live = false
+    }
+  }, [url])
+
+  if (!ok) return null
   return (
     <div className="downloads">
-      {FORMATS.map((f) => (
-        <a key={f.format} className="download" href={api.exportUrl(runId, f.format)} download={`foreman-${runId}.${f.format}`}>
-          <strong>{f.label}</strong>
-          <span className="muted">{f.note}</span>
-        </a>
-      ))}
+      <a className="download" href={url} download={`foreman-${runId}.xlsx`}>
+        <strong>Download Excel</strong>
+        <span className="muted">every row, coloured by who decided (Jev / LLM / code)</span>
+      </a>
     </div>
   )
 }

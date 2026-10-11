@@ -33,7 +33,7 @@ export function barsOf(value: unknown): Bar[] | null {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const entries = Object.entries(value)
     if (entries.length >= 2 && entries.every(([, v]) => isNum(v))) {
-      return entries.map(([label, v]) => ({ label, value: v as number }))
+      return entries.map(([label, v]) => ({ label: prettyLabel(label), value: v as number }))
     }
     return null
   }
@@ -148,8 +148,12 @@ export function escalatedAt(curve: [number, number][], t: number): number {
 }
 
 /** Cell display: numbers trimmed, booleans as yes/no, nested values as compact JSON. */
+/** Jev's escape option reads as "Other" to people. */
+export const prettyLabel = (label: string) => (label === 'none_of_these' ? 'Other' : label)
+
 export function fmtCell(v: unknown): string {
   if (v === null || v === undefined) return ''
+  if (v === 'none_of_these') return 'Other'
   if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString('en-US') : String(Math.round(v * 1000) / 1000)
   if (typeof v === 'boolean') return v ? 'yes' : 'no'
   if (typeof v === 'string') return v
