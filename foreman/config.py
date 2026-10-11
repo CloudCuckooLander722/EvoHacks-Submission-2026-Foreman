@@ -32,7 +32,13 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.fireworks.ai/inference/v1"
     llm_model: str = "accounts/fireworks/models/deepseek-v4-flash"
     llm_max_concurrency: int = 8
-    llm_timeout_s: float = 30
+    llm_timeout_s: float = 30  # decide() (fallback): short prompts, tiny answers
+    llm_json_timeout_s: float = 90  # json() (proposals, planner): longer outputs
+    llm_decide_max_tokens: int = 256
+    llm_json_max_tokens: int = 4096
+    # DeepSeek V4 on Fireworks reasons by default (~4k hidden tokens, ~40 s per proposal);
+    # "none" turns that off. "low" is ignored by the model. Empty = don't send the param.
+    llm_reasoning_effort: str = "none"
     llm_price_per_m_input: float = 0.0
     llm_price_per_m_output: float = 0.0
 
@@ -40,6 +46,11 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.7
     runs_dir: str = "runs"
     log_level: str = "INFO"
+
+    @field_validator("llm_reasoning_effort", mode="before")
+    @classmethod
+    def _effort_none_is_empty(cls, v: object) -> object:
+        return "" if v is None else v
 
     @field_validator("ai_gateway_api_key", "fireworks_api_key", mode="before")
     @classmethod

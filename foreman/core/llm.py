@@ -7,8 +7,10 @@ fallback that can return junk is worse than keeping Jev's low-confidence answer.
 Written against openai 3.x: `AsyncOpenAI` refuses to construct without an API key, so
 the SDK client is built lazily on first use; that keeps `make_context()` and offline runs
 working without `FIREWORKS_API_KEY`. The SDK uses its own `httpx2` transport, so tests
-mock the SDK client object rather than HTTP. `openai` is imported lazily because the 3.x
-package is large (~2k modules) and offline runs with `FakeLLM` never need it.
+mock the SDK client object rather than HTTP. `openai` is not imported at module level
+because the 3.x package is large (~2k modules, 15-40 s to import on a busy laptop) and
+offline runs with `FakeLLM` never need it. A live `LLMClient` imports it when constructed,
+so that cost lands in `make_context()` instead of blocking the event loop mid-run.
 """
 
 from __future__ import annotations
@@ -243,12 +245,31 @@ def _to_answer(question: Question, obj: dict[str, Any]) -> Answer:
     raise LLMError(f"not a question: {question!r}")
 
 
+@dataclass(frozen=True)
+class _Limits:
+    """Per-call budget: json() (proposals, planner) gets more time and tokens than decide()."""
+
+    timeout_s: float
+    max_tokens: int
+
+
+def _transient(e: Exception) -> bool:
+    """Worth one retry: timeouts, dropped connections, rate limits and 5xx."""
+    import openai
+
+    if isinstance(e, (openai.APITimeoutError, openai.APIConnectionError, openai.RateLimitError)):
+        return True
+    return isinstance(e, openai.APIStatusError) and e.status_code >= 500
+
+
 class LLMClient:
     """Light LLM over Fireworks' OpenAI-compatible API, with JSON-only helpers."""
 
     def __init__(self, settings: Settings | None = None, *, client: Any = None) -> None:
         self.settings = settings or get_settings()
         self._client = client
+        if client is None:
+            import openai  # noqa: F401 - pay the slow import now, not inside the first call
         self._sem = asyncio.Semaphore(self.settings.llm_max_concurrency)
         # None = untested, True = provider accepts response_format, False = it rejects it.
         self._json_mode: bool | None = None
@@ -268,11 +289,13 @@ class LLMClient:
             key = self.settings.fireworks_api_key
             if key is None:
                 raise LLMUnavailable("FIREWORKS_API_KEY is not set in .env")
+            # SDK retries are off: `_create_retrying` retries once itself, so a timeout
+            # costs at most two attempts instead of the SDK's silent three.
             self._client = openai.AsyncOpenAI(
                 base_url=self.settings.llm_base_url,
                 api_key=key.get_secret_value(),
                 timeout=self.settings.llm_timeout_s,
-                max_retries=2,
+                max_retries=0,
             )
         return self._client
 
@@ -280,6 +303,15 @@ class LLMClient:
         usage = getattr(resp, "usage", None)
         pt = int(getattr(usage, "prompt_tokens", 0) or 0)
         ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        details = getattr(usage, "completion_tokens_details", None)
+        reasoning = int(getattr(details, "reasoning_tokens", 0) or 0)
+        log.debug(
+            "LLM call: %d ms, %d prompt + %d completion tokens (%d reasoning)",
+            latency_ms,
+            pt,
+            ct,
+            reasoning,
+        )
         s = self.settings
         cost = pt * s.llm_price_per_m_input / 1e6 + ct * s.llm_price_per_m_output / 1e6
         self.calls += 1
@@ -288,8 +320,18 @@ class LLMClient:
         self.cost_usd += cost
         record_usage(pt, ct, cost, latency_ms)
 
-    async def _create(self, messages: list[dict[str, str]], json_mode: bool) -> Any:
-        kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0}
+    async def _create(
+        self, messages: list[dict[str, str]], json_mode: bool, limits: _Limits
+    ) -> Any:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": limits.max_tokens,
+            "timeout": limits.timeout_s,
+        }
+        if self.settings.llm_reasoning_effort:
+            kwargs["reasoning_effort"] = self.settings.llm_reasoning_effort
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
         t0 = time.perf_counter()
@@ -297,7 +339,21 @@ class LLMClient:
         self._record(resp, int((time.perf_counter() - t0) * 1000))
         return resp
 
-    async def _complete(self, system: str, user: str) -> str:
+    async def _create_retrying(
+        self, messages: list[dict[str, str]], json_mode: bool, limits: _Limits
+    ) -> Any:
+        """`_create`, retried once on a timeout or transient provider error."""
+        import openai
+
+        try:
+            return await self._create(messages, json_mode, limits)
+        except openai.OpenAIError as e:
+            if not _transient(e):
+                raise
+            log.warning("LLM call failed (%s: %s); retrying once", type(e).__name__, e)
+        return await self._create(messages, json_mode, limits)
+
+    async def _complete(self, system: str, user: str, limits: _Limits) -> str:
         """One completion, learning once whether the provider accepts JSON mode."""
         import openai
 
@@ -305,16 +361,16 @@ class LLMClient:
         async with self._sem:
             try:
                 if self._json_mode is False:
-                    resp = await self._create(messages, json_mode=False)
+                    resp = await self._create_retrying(messages, False, limits)
                 else:
                     try:
-                        resp = await self._create(messages, json_mode=True)
+                        resp = await self._create_retrying(messages, True, limits)
                         self._json_mode = True
                     except (openai.BadRequestError, openai.UnprocessableEntityError) as e:
                         if self._json_mode is True:
                             raise
                         log.info("LLM rejected response_format (%s); retrying without it", e)
-                        resp = await self._create(messages, json_mode=False)
+                        resp = await self._create_retrying(messages, False, limits)
                         self._json_mode = False
             except openai.OpenAIError as e:
                 status = getattr(e, "status_code", None)
@@ -323,13 +379,26 @@ class LLMClient:
                 ) from e
         if not resp.choices:
             raise LLMError("LLM returned no choices")
-        return resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            raise LLMError(f"LLM output hit max_tokens ({limits.max_tokens})")
+        return choice.message.content or ""
+
+    @property
+    def _json_limits(self) -> _Limits:
+        s = self.settings
+        return _Limits(s.llm_json_timeout_s, s.llm_json_max_tokens)
+
+    @property
+    def _decide_limits(self) -> _Limits:
+        s = self.settings
+        return _Limits(s.llm_timeout_s, s.llm_decide_max_tokens)
 
     async def json(self, system: str, user: str) -> dict[str, Any]:
         """Ask for a JSON object; retry once if the output does not parse."""
         last: LLMError | None = None
         for _ in range(2):
-            text = await self._complete(system, user)
+            text = await self._complete(system, user, self._json_limits)
             try:
                 return parse_json_object(text)
             except LLMError as e:
@@ -350,7 +419,7 @@ class LLMClient:
             return None
         for attempt in range(2):
             try:
-                text = await self._complete(system, user)
+                text = await self._complete(system, user, self._decide_limits)
                 return _to_answer(question, parse_json_object(text))
             except LLMUnavailable as e:
                 log.warning("LLM fallback for %s unavailable: %s", qid, e)

@@ -120,6 +120,51 @@ async def test_json_retries_parse_failure_once() -> None:
         await llm.json("s", "u")
 
 
+def _timeout() -> openai.APITimeoutError:
+    return openai.APITimeoutError(request=httpx2.Request("POST", "https://llm.test/v1"))
+
+
+async def test_json_and_decide_get_their_own_limits() -> None:
+    llm, sdk = _client('{"a": 1}', '{"choice": "bug"}')
+    await llm.json("s", "u")
+    await llm.decide("state", "q", Choice("Type?", {"bug": None, "other": None}))
+    j, d = sdk.requests
+    assert (j["timeout"], j["max_tokens"]) == (90, 4096)
+    assert (d["timeout"], d["max_tokens"]) == (30, 256)
+    assert j["reasoning_effort"] == d["reasoning_effort"] == "none"
+
+
+async def test_reasoning_effort_can_be_omitted() -> None:
+    s = Settings(_env_file=None, fireworks_api_key=SecretStr("k"), llm_reasoning_effort="")
+    sdk = FakeSDK('{"a": 1}')
+    await LLMClient(s, client=sdk).json("s", "u")
+    assert "reasoning_effort" not in sdk.requests[0]
+
+
+async def test_timeout_retried_once() -> None:
+    llm, sdk = _client(_timeout(), '{"a": 1}')
+    assert await llm.json("s", "u") == {"a": 1}
+    assert len(sdk.requests) == 2
+    llm, sdk = _client(_timeout(), _timeout(), '{"a": 1}')
+    with pytest.raises(LLMError, match="LLM call failed"):
+        await llm.json("s", "u")
+    assert len(sdk.requests) == 2
+
+
+async def test_output_cut_at_max_tokens_is_an_error() -> None:
+    llm, sdk = _client()
+    cut = _resp('{"themes": [')
+    cut.choices[0].finish_reason = "length"
+
+    async def create(**kw):
+        sdk.requests.append(kw)
+        return cut
+
+    sdk.chat.completions.create = create
+    with pytest.raises(LLMError, match="max_tokens"):
+        await llm.json("s", "u")
+
+
 async def test_decide_choice_validates_keys() -> None:
     q = Choice("Type?", {"bug": "Broken", "praise": None})
     llm, sdk = _client('{"choice": "feature"}', '```json\n{"choice": "bug"}\n```')
