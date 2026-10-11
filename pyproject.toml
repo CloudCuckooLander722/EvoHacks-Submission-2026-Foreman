@@ -23,7 +23,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21", "ruff>=0.6", "streamlit>=1.40"]
+chat = ["streamlit>=1.40"]
 
 [tool.setuptools.packages.find]
 include = ["foreman*"]

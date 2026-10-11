@@ -120,14 +120,3 @@ async def test_fakellm_json() -> None:
     assert (await llm.json("Propose themes", ""))["themes"] == ["Camera"]  # deep-copied
     with pytest.raises(LLMError):
         await llm.json("unrelated", "prompt")
-
-
-async def test_fake_llm_chat_echoes_last_user_message() -> None:
-    msgs = [
-        {"role": "user", "content": "one"},
-        {"role": "assistant", "content": "x"},
-        {"role": "user", "content": "two"},
-    ]
-    assert await FakeLLM().chat(msgs) == "(FakeLLM) You said: two"
-    with pytest.raises(LLMError):
-        await FakeLLM(fail=True).chat(msgs)

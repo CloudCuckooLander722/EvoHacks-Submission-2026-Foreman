@@ -245,14 +245,5 @@ class FakeLLM:
                 return copy.deepcopy(response)
         raise LLMError("FakeLLM has no json_response matching this prompt")
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
-        """Echo the last user message, so a chat UI can be clicked through offline."""
-        self.calls.append(("chat", messages))
-        record_usage(0, 0, 0.0, 0)
-        if self.fail:
-            raise LLMError("FakeLLM is set to fail")
-        last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        return f"(FakeLLM) You said: {last}"
-
     async def aclose(self) -> None:
         return None

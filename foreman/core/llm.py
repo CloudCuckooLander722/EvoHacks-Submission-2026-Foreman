@@ -429,30 +429,6 @@ class LLMClient:
                 log.warning("LLM JSON parse failed: %s", e)
         raise LLMError(f"LLM output did not parse twice: {last}")
 
-    async def chat(self, messages: list[dict[str, str]]) -> str:
-        """Free-text reply to a conversation (role/content dicts), for the chat UI.
-
-        json() and decide() force JSON because code parses their output; a person reads
-        this one, so JSON mode stays off. It gets json()'s budget: both are long outputs.
-        """
-        import openai
-
-        async with self._sem:
-            try:
-                resp = await self._create_retrying(messages, False, self._json_limits)
-            except openai.OpenAIError as e:
-                status = getattr(e, "status_code", None)
-                raise LLMUnavailable(
-                    f"LLM call failed{f' [{status}]' if status else ''}: {e}"
-                ) from e
-        if not resp.choices:
-            raise LLMError("LLM returned no choices")
-        choice = resp.choices[0]
-        if getattr(choice, "finish_reason", None) == "length":
-            # A cut-off reply is still worth showing a person, unlike cut-off JSON.
-            log.warning("LLM chat reply hit max_tokens (%d)", self._json_limits.max_tokens)
-        return choice.message.content or ""
-
     async def warm(self) -> None:
         """One tiny call so the first real fallback skips connection setup. Never raises.
 
