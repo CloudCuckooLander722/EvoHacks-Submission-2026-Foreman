@@ -86,7 +86,7 @@ class RunState(BaseModel):
     run_id: str
     job: str                        # the user's plain-English request
     items: list[ItemState]
-    dropped: list[ItemState] = []   # removed by Filter (kept for the report)
+    dropped: list[ItemState] = []   # full items removed by a tool (e.g. Filter); reason in meta["drop_reason"]
     aggregates: dict[str, Any] = {} # cross-item outputs: groups, rankings, totals...
 ```
 
@@ -95,7 +95,10 @@ Field naming convention for tool outputs:
 - `fields[out]` holds the value.
 - `fields[f"{out}__confidence"]` holds 0–1 confidence; for composite outputs, the minimum.
 - `fields[f"{out}__by"]` holds `"jev"`, `"llm"` or `"code"`.
-- `fields[f"{out}__low_confidence"]` is True if the fallback failed.
+- `fields[f"{out}__low_confidence"]` is written only when True (the fallback failed); otherwise the key is absent.
+- Outputs computed by code (e.g. `rank` from a `score_field`, `calculate` results) use `by="code"` and confidence 1.0.
+
+**Dropping items.** A tool that removes an item (e.g. Filter) moves the whole `ItemState` from `RunState.items` to `RunState.dropped` and sets `item.meta["drop_reason"]` (e.g. `"filter n1: is_review=false"`). In results.json each dropped item becomes `{id, text, fields, reason}`, with `reason` taken from `meta["drop_reason"]`.
 
 **Routing.** Every tool's params accept `where: Condition | None`, and only items matching the condition are processed. This is how the plan branches without a full graph engine.
 
@@ -303,7 +306,7 @@ Build order follows the hero demo: tools 1–8 are needed for it, 9–11 are ext
 ```
 
 - **Planner** (`graph/planner.py`) sends the LLM the job, `catalog()` and 20 sample items. It gets `plan.json` back, validates every node's params against the tool's `Params` model, and repairs once on failure.
-- **Executor** (`graph/executor.py`) runs nodes in order on one `RunState`, streams ledger events and per-node `ToolReport`s, then builds `results.json` (`foreman/contracts.py`).
+- **Executor** (`graph/executor.py`) runs nodes in order on one `RunState`, streams ledger events and per-node `ToolReport`s, then builds `results.json` (`foreman/contracts.py`). results.json embeds the full plan.json object as `plan` and keeps each item's `meta`.
 - **Stretch:** merge consecutive per-item nodes into one Jev call per item (speculative fan-out).
 
 ## 8. API and frontend (after executor)
