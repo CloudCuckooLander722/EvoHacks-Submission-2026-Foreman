@@ -34,6 +34,7 @@ OPTIONS: dict[str, str | None] = {
 VERDICTS = (
     "supported",
     "partially_supported",
+    "unsupported",
     "contradicted",
     "no_claims",
     "skipped_source_too_large",
@@ -143,13 +144,19 @@ def extract_claims(item: ItemState, params: VerifyParams) -> dict[str, str]:
 
 
 def overall_verdict(verdicts: list[str]) -> str:
-    """Any contradiction wins; all supported is supported; anything else is partial."""
+    """Any contradiction wins; all supported is supported; none supported is unsupported.
+
+    "unsupported" is separate from "partially_supported" so a reply whose every claim is
+    absent from the source is not reported as half right.
+    """
     if not verdicts:
         return "no_claims"
     if "contradicted" in verdicts:
         return "contradicted"
     if all(v == "supported" for v in verdicts):
         return "supported"
+    if "supported" not in verdicts:
+        return "unsupported"
     return "partially_supported"
 
 

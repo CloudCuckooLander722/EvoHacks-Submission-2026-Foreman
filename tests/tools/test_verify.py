@@ -155,7 +155,9 @@ async def test_one_jev_call_per_item_one_question_per_claim() -> None:
     [
         (["supported", "supported"], "supported"),
         (["supported", "not_mentioned"], "partially_supported"),
-        (["not_mentioned", "not_mentioned"], "partially_supported"),
+        (["not_mentioned", "not_mentioned"], "unsupported"),
+        (["not_mentioned"], "unsupported"),
+        (["not_mentioned", "contradicted"], "contradicted"),
         (["supported", "contradicted", "not_mentioned"], "contradicted"),
         ([], "no_claims"),
     ],
@@ -170,6 +172,7 @@ async def test_verdicts_claims_and_problem_claims() -> None:
             "good": "We refunded your order today. The jar ships tomorrow morning.",
             "partial": "We refunded your order today. You get an invented free month.",
             "bad": "We refunded the wrong amount here. You get an invented free month.",
+            "made_up": "You get an invented free month. An invented gift card ships too.",
         }
     )
     report, _ = await _verify(run, FakeJev(_rule()))
@@ -184,6 +187,11 @@ async def test_verdicts_claims_and_problem_claims() -> None:
         "We refunded the wrong amount here.",
         "You get an invented free month.",
     ]
+    assert f["made_up"]["verified"] == "unsupported"
+    assert f["made_up"]["verified_problem_claims"] == [
+        "You get an invented free month.",
+        "An invented gift card ships too.",
+    ]
     assert f["bad"]["verified_claims"][0] == {
         "id": "c1",
         "text": "We refunded the wrong amount here.",
@@ -195,11 +203,12 @@ async def test_verdicts_claims_and_problem_claims() -> None:
     assert run.aggregates["verified_counts"] == {
         "supported": 1,
         "partially_supported": 1,
+        "unsupported": 1,
         "contradicted": 1,
         "no_claims": 0,
         "skipped_source_too_large": 0,
     }
-    assert report.jev_decisions == 6 and report.llm_decisions == 0
+    assert report.jev_decisions == 8 and report.llm_decisions == 0
 
 
 async def test_by_llm_and_min_confidence_when_one_claim_falls_back() -> None:
@@ -348,7 +357,7 @@ def test_dev_cli_fake_inline_sample(tmp_path, monkeypatch) -> None:
     out = json.loads((tmp_path / "out" / "verify_results.json").read_text())
     verdicts = {i["id"]: i["fields"]["verified"] for i in out["items"]}
     assert verdicts["2"] == "no_claims"
-    assert verdicts["1"] in {"supported", "partially_supported", "contradicted"}
+    assert verdicts["1"] in {"supported", "partially_supported", "unsupported", "contradicted"}
 
 
 def test_sample_file_shape() -> None:
