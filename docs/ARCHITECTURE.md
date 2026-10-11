@@ -78,16 +78,19 @@ Every item flows through the plan as an `ItemState`. Tools read its fields and w
 ```python
 class ItemState(BaseModel):
     id: str
-    text: str                       # main text of the item (from extraction)
-    fields: dict[str, Any] = {}     # original columns + everything tools add
-    meta: dict[str, Any] = {}       # source info (row, page, sheet...)
+    text: str  # main text of the item (from extraction)
+    fields: dict[str, Any] = {}  # original columns + everything tools add
+    meta: dict[str, Any] = {}  # source info (row, page, sheet...)
+
 
 class RunState(BaseModel):
     run_id: str
-    job: str                        # the user's plain-English request
+    job: str  # the user's plain-English request
     items: list[ItemState]
-    dropped: list[ItemState] = []   # full items removed by a tool (e.g. Filter); reason in meta["drop_reason"]
-    aggregates: dict[str, Any] = {} # cross-item outputs: groups, rankings, totals...
+    dropped: list[
+        ItemState
+    ] = []  # full items removed by a tool (e.g. Filter); reason in meta["drop_reason"]
+    aggregates: dict[str, Any] = {}  # cross-item outputs: groups, rankings, totals...
 ```
 
 Field naming convention for tool outputs:
@@ -185,6 +188,7 @@ class JevClient:
 - Concurrency semaphore (`JEV_MAX_CONCURRENCY`, default 32) plus a token-bucket rate limiter (`JEV_MAX_RPS`, default 60; the published limit is 80).
 - Retries 429/529/5xx and timeouts with exponential backoff and jitter, up to 5 attempts.
 - Cost comes from `provider_metadata.gateway.cost` if present, else `input_tokens * 0.042 / 1e6`.
+- Errors: `ValueError` for malformed questions, `StateTooLarge` (a `ValueError`) before sending an oversized state, `JevError` for refusals and exhausted retries.
 
 ### LLM client — `core/llm.py`
 
@@ -210,6 +214,8 @@ class Decider:
 3. If the LLM returns a valid answer, it replaces Jev's (`decided_by="llm"`, `jev_value` kept). Otherwise Jev's answer stays with `low_confidence=True`.
 4. Writes one ledger `Decision` per question and returns the final answers.
 
+If Jev itself fails (`JevError`), the LLM is tried for every question; if any still fails, `decide` raises `DecisionError`. `StateTooLarge` propagates unchanged. `PerItemTool.run` catches both, skips the item and sets `fields[f"{output_field}__error"]`.
+
 ### Ledger — `core/ledger.py`
 
 ```python
@@ -223,8 +229,11 @@ class Decision(BaseModel):
 class Ledger:
     def add(self, d: Decision) -> None              # also fires on_event callbacks (live meter / SSE)
     def stats(self) -> RunStats                     # counts by decided_by, jev/llm cost, low_confidence count, wall time
-    def escalation_curve(self) -> list[tuple[float, int]]   # threshold -> how many Jev decisions would fall back
+    def escalation_curve(self, steps=21) -> list[tuple[float, int]]   # threshold -> how many Jev decisions would fall back
+    def record_call(self, provider: Literal["jev", "llm"], cost_usd=0.0, n=1) -> None  # call counts + cost for RunStats
 ```
+
+`RunStats` call counts and costs come from `record_call`, not from decisions, because one Jev call covers several decisions and a failed fallback costs money without a decision of its own. The Decider records its own calls. A tool that calls `ctx.llm.json()` directly (proposals) should wrap it in `with track_usage() as u:` (from `core/llm.py`), then call `ctx.ledger.record_call("llm", u.cost_usd, n=u.calls)` and add a `Decision(kind="proposal", decided_by="llm", ...)`.
 
 `escalation_curve()` powers the confidence-bar demo. Every Jev confidence is stored, so the UI can show how many items would escalate at any threshold without re-running.
 
@@ -233,38 +242,61 @@ class Ledger:
 ```python
 @dataclass
 class RunContext:
-    run_id: str; threshold: float
-    jev: JevClient; llm: LLMClient; decider: Decider; ledger: Ledger
-    progress: Callable[[str, int, int], None] | None = None   # (tool, done, total)
+    run_id: str
+    threshold: float
+    jev: JevClient
+    llm: LLMClient
+    decider: Decider
+    ledger: Ledger
+    progress: Callable[[str, int, int], None] | None = None  # (tool, done, total)
 ```
 
 ## 5. Tool interface — `tools/base.py`
 
 ```python
 class ToolParams(BaseModel):
-    input_field: str = "text"          # "text" = item.text, else item.fields[input_field]
-    output_field: str                  # each tool sets its own default
+    input_field: str = "text"  # "text" = item.text, else item.fields[input_field]
+    output_field: str  # each tool sets its own default
     where: Condition | None = None
 
+
 class ToolReport(BaseModel):
-    tool: str; items_in: int; items_out: int
-    jev_decisions: int; llm_decisions: int; code_ops: int; low_confidence: int
-    duration_ms: int; notes: list[str] = []
+    tool: str
+    items_in: int
+    items_out: int
+    jev_decisions: int
+    llm_decisions: int
+    code_ops: int
+    low_confidence: int
+    duration_ms: int
+    notes: list[str] = []
+
 
 class Tool(ABC):
     name: ClassVar[str]
-    description: ClassVar[str]         # 2–4 sentences: what it does + when the planner should use it
+    description: ClassVar[str]  # 2–4 sentences: what it does + when the planner should use it
     Params: ClassVar[type[ToolParams]]
     uses: ClassVar[Literal["jev", "jev+llm", "code"]]
+
     async def run(self, run: RunState, params: ToolParams, ctx: RunContext) -> ToolReport: ...
+
 
 class PerItemTool(Tool):
     """For tools that ask questions about each item independently."""
+
     def questions(self, item: ItemState, params) -> dict[str, Question]: ...
-    def state(self, item: ItemState, params) -> str | dict: ...          # default: the input text
+    def state(self, item: ItemState, params) -> str | dict: ...  # default: the input text
     def apply(self, item: ItemState, answers: dict[str, Answer], params) -> None: ...
-    # run(): selects items via `where`, calls ctx.decider.decide per item with bounded concurrency, applies
+
+    def after_all(
+        self, run: RunState, params, report: ToolReport
+    ) -> None: ...  # optional hook, e.g. Filter drops items here
+
+    # run(): selects items via `where`, calls ctx.decider.decide per item with bounded concurrency, applies,
+    # then after_all(); items_out = len(run.items) afterwards
 ```
+
+`RunContext.jev` / `.llm` are typed as the `JevLike` / `LLMLike` protocols in `core/decide.py`, so `FakeJev` / `FakeLLM` (and test doubles) fit without subclassing.
 
 The registry (`tools/__init__.py`) imports every module in `foreman/tools/` and registers each `Tool` subclass by `name`. `catalog()` returns `[{name, description, uses, params_schema}]` for the planner.
 

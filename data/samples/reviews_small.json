@@ -1,0 +1,309 @@
+{
+  "source": {
+    "filename": "reviews_small.xlsx",
+    "kind": "xlsx",
+    "sheet": "Sheet1"
+  },
+  "items": [
+    {
+      "id": "row-2",
+      "text": "App crashes every time I open the camera. Pixel 8, latest update.",
+      "fields": {
+        "rating": 1,
+        "date": "2026-09-30",
+        "author": "kim_88"
+      },
+      "meta": {
+        "row": 2
+      }
+    },
+    {
+      "id": "row-3",
+      "text": "Camera crashes the whole app on my Pixel 8 since the last update. Unusable.",
+      "fields": {
+        "rating": 1,
+        "date": "2026-10-01",
+        "author": "dev_rob"
+      },
+      "meta": {
+        "row": 3
+      }
+    },
+    {
+      "id": "row-4",
+      "text": "Since updating, opening the camera makes the app crash immediately (Pixel 8 Pro).",
+      "fields": {
+        "rating": 2,
+        "date": "2026-10-02",
+        "author": "marta.s"
+      },
+      "meta": {
+        "row": 4
+      }
+    },
+    {
+      "id": "row-5",
+      "text": "Absolutely love this app. The new editor is fast and the filters look great.",
+      "fields": {
+        "rating": 5,
+        "date": "2026-09-12",
+        "author": "sunny_day"
+      },
+      "meta": {
+        "row": 5
+      }
+    },
+    {
+      "id": "row-6",
+      "text": "Really solid app. Would be perfect with a dark mode option.",
+      "fields": {
+        "rating": 4,
+        "date": "2026-09-14",
+        "author": "j.chen"
+      },
+      "meta": {
+        "row": 6
+      }
+    },
+    {
+      "id": "row-7",
+      "text": "Please add dark mode! My eyes hurt at night.",
+      "fields": {
+        "rating": 3,
+        "date": "2026-09-15",
+        "author": "alex_w"
+      },
+      "meta": {
+        "row": 7
+      }
+    },
+    {
+      "id": "row-8",
+      "text": "I keep getting logged out every few hours and have to re-enter my password.",
+      "fields": {
+        "rating": 2,
+        "date": "2026-09-18",
+        "author": "pat_k"
+      },
+      "meta": {
+        "row": 8
+      }
+    },
+    {
+      "id": "row-9",
+      "text": "Login with Google fails with 'unknown error'. Tried reinstalling, still broken.",
+      "fields": {
+        "rating": 1,
+        "date": "2026-09-20",
+        "author": "nora1990"
+      },
+      "meta": {
+        "row": 9
+      }
+    },
+    {
+      "id": "row-10",
+      "text": "Get 90% off designer bags at cheap-bags-outlet.biz !!! Limited offer, click now",
+      "fields": {
+        "rating": 5,
+        "date": "2026-09-21",
+        "author": "BEST DEALS"
+      },
+      "meta": {
+        "row": 10
+      }
+    },
+    {
+      "id": "row-11",
+      "text": "Export to PDF works but the fonts come out blurry. Fix please.",
+      "fields": {
+        "rating": 3,
+        "date": "2026-09-22",
+        "author": "lee.m"
+      },
+      "meta": {
+        "row": 11
+      }
+    },
+    {
+      "id": "row-12",
+      "text": "Would love an option to export albums as a zip file.",
+      "fields": {
+        "rating": 4,
+        "date": "2026-09-23",
+        "author": "gabriel_r"
+      },
+      "meta": {
+        "row": 12
+      }
+    },
+    {
+      "id": "row-13",
+      "text": "Customer support answered in 10 minutes and fixed my billing issue. Great team!",
+      "fields": {
+        "rating": 5,
+        "date": "2026-09-24",
+        "author": "ana_p"
+      },
+      "meta": {
+        "row": 13
+      }
+    },
+    {
+      "id": "row-14",
+      "text": "I was charged twice for the yearly subscription and nobody replies to my emails.",
+      "fields": {
+        "rating": 1,
+        "date": "2026-09-25",
+        "author": "tom_h"
+      },
+      "meta": {
+        "row": 14
+      }
+    },
+    {
+      "id": "row-15",
+      "text": "The app drains my battery really fast, even when it's in the background.",
+      "fields": {
+        "rating": 2,
+        "date": "2026-09-26",
+        "author": "ivy_q"
+      },
+      "meta": {
+        "row": 15
+      }
+    },
+    {
+      "id": "row-16",
+      "text": "Earn $500 daily from home with crypto signals, DM me on telegram @easy_money",
+      "fields": {
+        "rating": 5,
+        "date": "2026-09-26",
+        "author": "crypto_king_77"
+      },
+      "meta": {
+        "row": 16
+      }
+    },
+    {
+      "id": "row-17",
+      "text": "Sync between my phone and tablet takes forever, sometimes photos never show up.",
+      "fields": {
+        "rating": 3,
+        "date": "2026-09-27",
+        "author": "ben_o"
+      },
+      "meta": {
+        "row": 17
+      }
+    },
+    {
+      "id": "row-18",
+      "text": "Nice update overall. The new onboarding is much clearer than before.",
+      "fields": {
+        "rating": 4,
+        "date": "2026-09-28",
+        "author": "rachel_v"
+      },
+      "meta": {
+        "row": 18
+      }
+    },
+    {
+      "id": "row-19",
+      "text": "Notifications arrive hours late, which makes shared albums pretty useless.",
+      "fields": {
+        "rating": 2,
+        "date": "2026-09-29",
+        "author": "omar_z"
+      },
+      "meta": {
+        "row": 19
+      }
+    },
+    {
+      "id": "row-20",
+      "text": "Could you add a way to schedule posts? I'd use it every day.",
+      "fields": {
+        "rating": 3,
+        "date": "2026-09-29",
+        "author": "hana_k"
+      },
+      "meta": {
+        "row": 20
+      }
+    },
+    {
+      "id": "row-21",
+      "text": "App freezes on the loading screen after the update on iPhone 13. Have to force close.",
+      "fields": {
+        "rating": 1,
+        "date": "2026-10-03",
+        "author": "will_t"
+      },
+      "meta": {
+        "row": 21
+      }
+    },
+    {
+      "id": "row-22",
+      "text": "Five stars. Simple, quick, does exactly what I need.",
+      "fields": {
+        "rating": 5,
+        "date": "2026-10-03",
+        "author": "grace_l"
+      },
+      "meta": {
+        "row": 22
+      }
+    },
+    {
+      "id": "row-23",
+      "text": "Good app but the search is slow when I have more than 5,000 photos.",
+      "fields": {
+        "rating": 4,
+        "date": "2026-10-04",
+        "author": "mia_d"
+      },
+      "meta": {
+        "row": 23
+      }
+    },
+    {
+      "id": "row-24",
+      "text": "Too many ads between photos now. I'd pay to remove them but there's no option.",
+      "fields": {
+        "rating": 2,
+        "date": "2026-10-05",
+        "author": "lucas_f"
+      },
+      "meta": {
+        "row": 24
+      }
+    },
+    {
+      "id": "row-25",
+      "text": "Widgets on the home screen would be a great addition.",
+      "fields": {
+        "rating": 3,
+        "date": "2026-10-06",
+        "author": "sofia_b"
+      },
+      "meta": {
+        "row": 25
+      }
+    },
+    {
+      "id": "row-26",
+      "text": "Deleted my account but you still keep emailing me. How do I get my data removed?",
+      "fields": {
+        "rating": 1,
+        "date": "2026-10-07",
+        "author": "ethan_c"
+      },
+      "meta": {
+        "row": 26
+      }
+    }
+  ]
+}
